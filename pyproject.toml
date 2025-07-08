@@ -16,9 +16,9 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    'flash-linear-attention',
     'torch>=2.5',
     'torchdata',
+    'torchtitan @ git+https://github.com/pytorch/torchtitan.git@5e2033c',
     'transformers>=4.45.0',
     'triton>=3.0',
     'datasets>=3.3.0',
