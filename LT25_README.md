@@ -38,6 +38,11 @@ chmod +x train.sh
 chmod +x train_timeseries.sh
 ```
 
+9. Run the timeseries training script:
+```bash
+./train_timeseries.sh
+```
+
 ## Verification
 
 After installation, verify that the correct version of flash-linear-attention is installed:
