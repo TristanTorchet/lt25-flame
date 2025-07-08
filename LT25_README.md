@@ -31,6 +31,13 @@ uv sync
 uv pip install -e ./flash-linear-attention --force-reinstall
 ```
 
+7. Modify permissions for .sh files to make them executable:
+```bash
+chmod +x launch_training.sh
+chmod +x train.sh
+chmod +x train_timeseries.sh
+```
+
 ## Verification
 
 After installation, verify that the correct version of flash-linear-attention is installed:
