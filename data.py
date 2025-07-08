@@ -91,3 +91,17 @@ def create_cifar_gs_classification_dataset(bsz=128, root="./data"):
     )
 
     return trainloader, valloader, testloader, N_CLASSES, SEQ_LENGTH, IN_DIM
+
+def create_librosa_raw_classification_dataset(bsz=128, root="./data"):
+    
+    print("[*] Generating CIFAR-10 Classification Dataset")
+
+    # Constants
+    
+    train_loader, val_loader, char_to_idx, idx_to_char = create_asr_dataloaders(
+                        batch_size = bsz,
+                        max_samples=100, 
+                        use_ctc=True,
+                        num_mfcc=256)
+
+    return train_loader, val_loader, val_loader, len(char_to_idx), -1, num_mfcc
