@@ -1,0 +1,22 @@
+{
+    "input_size": 1,
+    "num_classes": 10,
+    "max_sequence_length": 1024,
+    "attn_mode": "chunk",
+    "hidden_size": 64,
+    "num_hidden_layers": 4,
+    "num_heads": 1,
+    "expand_ratio": 1,
+    "use_short_conv": false,
+    "conv_size": 4,
+    "use_lower_bound": true,
+    "hidden_ratio": 4,
+    "intermediate_size": null,
+    "hidden_act": "swish",
+    "elementwise_affine": true,
+    "norm_eps": 1e-4,
+    "fuse_norm": true,
+    "fuse_swiglu": true,
+    "initializer_range": 0.02,
+    "model_type": "hgrn_timeseries"
+}
