@@ -7,3 +7,6 @@
 [submodule "3rdparty/lm-evaluation-harness"]
 	path = 3rdparty/lm-evaluation-harness
 	url = https://github.com/EleutherAI/lm-evaluation-harness
+[submodule "flash-linear-attention"]
+	path = flash-linear-attention
+	url = git@github.com:TristanTorchet/lt25-flash-linear-attention.git
