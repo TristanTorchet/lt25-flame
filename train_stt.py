@@ -29,14 +29,14 @@ def parse_args():
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
     
     # Model args
-    parser.add_argument("--hidden_size", type=int, default=64)
-    parser.add_argument("--num_layers", type=int, default=4)
+    parser.add_argument("--hidden_size", type=int, default=32)
+    parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
     parser.add_argument("--expand_ratio", type=int, default=1)
     parser.add_argument("--attn_mode", type=str, default="chunk", choices=["chunk", "fused_recurrent"])
     
     # Training args
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.01)
@@ -192,11 +192,52 @@ def evaluate_model(model, dataloader, device):
     return avg_loss, accuracy, metrics
 
 
+def compute_training_metrics(model, batch, device):
+    """Compute sequence metrics for a training batch."""
+    model.eval()
+    
+    with torch.no_grad():
+        inputs = batch['features'].to(dtype=torch.float32, device=device)
+        labels = batch['targets'].to(dtype=torch.long, device=device)
+        input_lengths = batch['feature_lengths'].to(dtype=torch.long, device=device)
+        target_lengths = batch['target_lengths'].to(dtype=torch.long, device=device)
+        
+        # Transpose features to match model input format [batch, seq_len, feature_dim]
+        inputs = inputs.transpose(1, 2)
+        
+        # Decode sequences for evaluation
+        decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=False)
+        
+        # Extract target sequences from batched format
+        batch_targets = []
+        for i in range(len(decoded_seqs)):
+            target_len = target_lengths[i].item()
+            start_idx = sum(target_lengths[:i])
+            target_tokens = labels[start_idx:start_idx + target_len].tolist()
+            batch_targets.append(target_tokens)
+        
+        # Calculate metrics for this batch
+        metrics = calculate_sequence_metrics(decoded_seqs, batch_targets)
+    
+    model.train()
+    return metrics
+
+
 def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_interval, logger, max_grad_norm=1.0, use_wandb=False):
     """Train ASR model for one epoch."""
     model.train()
     total_loss = 0
     num_batches = len(dataloader)
+    
+    # Accumulate training metrics
+    train_metrics_accumulator = {
+        'cer': 0.0,
+        'wer': 0.0,
+        'exact_match': 0.0,
+        'token_accuracy': 0.0,
+        'total_sequences': 0,
+        'batch_count': 0
+    }
     
     for batch_idx, batch in enumerate(dataloader):
         # Handle ASR batch dictionary format
@@ -232,6 +273,18 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
             lr = scheduler.get_last_lr()[0]
             global_step = (epoch - 1) * num_batches + batch_idx
             total_steps = epoch * num_batches  # Approximate for current epoch
+            
+            # Compute training metrics for this batch
+            batch_metrics = compute_training_metrics(model, batch, device)
+            
+            # Accumulate metrics
+            train_metrics_accumulator['cer'] += batch_metrics['cer'] * batch_metrics['total_sequences']
+            train_metrics_accumulator['wer'] += batch_metrics['wer'] * batch_metrics['total_sequences']
+            train_metrics_accumulator['exact_match'] += batch_metrics['exact_match'] * batch_metrics['total_sequences']
+            train_metrics_accumulator['token_accuracy'] += batch_metrics['token_accuracy'] * batch_metrics['total_sequences']
+            train_metrics_accumulator['total_sequences'] += batch_metrics['total_sequences']
+            train_metrics_accumulator['batch_count'] += 1
+            
             logger.log_training_step(epoch, global_step, total_steps, avg_loss, lr, grad_norm.item())
             
             # Log to wandb if enabled
@@ -241,10 +294,25 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
                     "train/learning_rate": lr,
                     "train/grad_norm": grad_norm.item(),
                     "train/epoch": epoch,
-                    "train/step": global_step
+                    "train/step": global_step,
+                    "train/batch_cer": batch_metrics['cer'],
+                    "train/batch_wer": batch_metrics['wer'],
+                    "train/batch_exact_match": batch_metrics['exact_match'],
+                    "train/batch_token_accuracy": batch_metrics['token_accuracy'],
                 })
     
-    return total_loss / num_batches
+    # Compute epoch-level training metrics
+    epoch_train_metrics = {
+        'cer': train_metrics_accumulator['cer'] / max(train_metrics_accumulator['total_sequences'], 1),
+        'wer': train_metrics_accumulator['wer'] / max(train_metrics_accumulator['total_sequences'], 1),
+        'exact_match': train_metrics_accumulator['exact_match'] / max(train_metrics_accumulator['total_sequences'], 1),
+        'token_accuracy': train_metrics_accumulator['token_accuracy'] / max(train_metrics_accumulator['total_sequences'], 1),
+        'total_sequences': train_metrics_accumulator['total_sequences'],
+        'total_chars': train_metrics_accumulator['total_sequences'],  # Approximation
+        'total_words': train_metrics_accumulator['total_sequences'],  # Approximation
+    }
+    
+    return total_loss / num_batches, epoch_train_metrics
 
 
 def main():
@@ -400,7 +468,7 @@ def main():
         logger.log_epoch_start(epoch + 1, args.epochs)
         
         # Train
-        train_loss = train_epoch(
+        train_loss, train_metrics = train_epoch(
             model, train_loader, optimizer, scheduler, device, epoch + 1, 
             args.log_interval, logger, args.max_grad_norm, args.use_wandb
         )
@@ -423,13 +491,22 @@ def main():
                 'timestamp': timestamp,
             }, os.path.join(model_save_dir, f'best_model_asr.pt'))
         
+        # Log training metrics
+        logger.log_sequence_metrics(epoch + 1, train_metrics, "training")
+        
         # Log validation results with detailed metrics
         logger.log_validation(epoch + 1, val_loss, val_acc, is_best)
         logger.log_sequence_metrics(epoch + 1, val_metrics, "validation")
         
-        # Log validation results to wandb if enabled
+        # Log epoch results to wandb if enabled
         if args.use_wandb:
             wandb.log({
+                "train/epoch_loss": train_loss,
+                "train/epoch_cer": train_metrics['cer'],
+                "train/epoch_wer": train_metrics['wer'],
+                "train/epoch_exact_match": train_metrics['exact_match'],
+                "train/epoch_token_accuracy": train_metrics['token_accuracy'],
+                "train/epoch_total_sequences": train_metrics['total_sequences'],
                 "val/loss": val_loss,
                 "val/accuracy": val_acc,
                 "val/cer": val_metrics['cer'],
@@ -461,6 +538,7 @@ def main():
         "final_test_loss": test_loss,
         "final_test_accuracy": test_acc,
         "final_test_metrics": test_metrics,
+        "final_train_metrics": train_metrics,
         "best_val_accuracy": best_val_acc,
         "total_training_time": total_time,
         "total_params": total_params,
