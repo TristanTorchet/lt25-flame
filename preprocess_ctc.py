@@ -297,6 +297,14 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
     )
     
     val_dataset = LibriSpeechASRDataset(
+        split="validation",
+        max_samples=max_samples//5,
+        num_mfcc=num_mfcc,
+        streaming=streaming,
+        cache_dir=cache_dir
+    )
+    
+    test_dataset = LibriSpeechASRDataset(
         split="test",
         max_samples=max_samples//5,
         num_mfcc=num_mfcc,
@@ -321,7 +329,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         collate_fn=collate_function
     )
     
-    return train_loader, val_loader, train_dataset.char_to_idx, train_dataset.idx_to_char
+    return train_loader, val_loader, test_dataset, train_dataset.char_to_idx, train_dataset.idx_to_char
 
 
 def create_ctc_loss_function(char_to_idx):
