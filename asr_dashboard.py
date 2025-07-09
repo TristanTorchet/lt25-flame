@@ -15,7 +15,7 @@ app = dash.Dash(__name__)
 dataset_cache = {}
 current_data = None
 
-def load_dataset(max_samples=100, num_mfcc=256):
+def load_dataset(max_samples=100, num_mfcc=80):
     """Load the ASR dataset"""
     global dataset_cache, current_data
     

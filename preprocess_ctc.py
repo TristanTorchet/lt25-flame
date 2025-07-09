@@ -3,8 +3,9 @@ import random
 import torch
 import torchaudio
 import numpy as np
+import librosa
 from torch.utils.data import Dataset, DataLoader
-from torchaudio.transforms import MFCC, MelSpectrogram, AmplitudeToDB
+from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
 from datasets import load_dataset
 import re
 from collections import defaultdict
@@ -21,7 +22,7 @@ class LibriSpeechASRDataset(Dataset):
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,
-                 num_mfcc=256,
+                 num_mfcc=80,
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
@@ -65,20 +66,14 @@ class LibriSpeechASRDataset(Dataset):
         )
         
         # Initialize transforms
-        # Ensure n_mels >= num_mfcc to avoid ValueError
-        n_mels = max(num_mfcc, 40)
-        self.mfcc_transform = MFCC(
-            sample_rate=SAMPLE_RATE,
-            n_mfcc=num_mfcc,
-            melkwargs={
-                'n_fft': 400,
-                'n_mels': n_mels,
-                'hop_length': 160,
-                'win_length': 400,
-                'f_min': 0.0,
-                'f_max': SAMPLE_RATE // 2
-            }
-        ) if use_mfcc else None
+        # Store MFCC parameters for librosa
+        self.num_mfcc = num_mfcc
+        self.n_fft = 400
+        self.hop_length = 160
+        self.win_length = 400
+        self.n_mels = max(num_mfcc, 40)
+        self.f_min = 0.0
+        self.f_max = SAMPLE_RATE // 2
 
         # Prepare dataset
         self.prepare_dataset()
@@ -182,15 +177,6 @@ class LibriSpeechASRDataset(Dataset):
         # Convert to tensor
         waveform = torch.tensor(audio_array, dtype=torch.float32)
         
-        # Ensure single channel
-        if waveform.dim() > 1:
-            waveform = waveform.mean(0)
-        
-        # Apply augmentations (only during training)
-        # if self.dataset.split._name.startswith('train'):
-        #     waveform = self.time_shift(waveform)
-        #     waveform = self.add_background_noise(waveform)
-
         return waveform
 
     def __len__(self):
@@ -204,7 +190,36 @@ class LibriSpeechASRDataset(Dataset):
         
         # Extract features
         if self.use_mfcc:
-            features = self.mfcc_transform(waveform)
+            # Use librosa for MFCC extraction
+            waveform_np = waveform.numpy()
+            mfcc = librosa.feature.melspectrogram(
+                y=waveform_np,
+                sr=SAMPLE_RATE,
+                n_mels=self.n_mels,
+                hop_length=self.hop_length,
+                win_length=self.win_length,
+                n_fft=self.n_fft,
+                fmin=self.f_min,
+                fmax=self.f_max
+            )
+            # Add normalization for better visualization
+            mfcc = 20 * np.log10(mfcc + 1e-10)
+            mfcc = (mfcc - np.mean(mfcc, axis=1, keepdims=True)) + 1e-8
+            # # Periodically save MFCC visualizations
+            import matplotlib.pyplot as plt
+            plt.figure(figsize=(10, 4))
+            plt.imshow(mfcc, aspect='auto', origin='lower', interpolation='none', cmap='jet')
+            plt.colorbar(format='%+2.0f dB')
+            plt.title(f'MFCC - {sample["id"]}')
+            plt.ylabel('MFCC Coefficients')
+            plt.xlabel('Time Frames')
+            plt.tight_layout()
+            
+            # Create directory if it doesn't exist
+            os.makedirs('mfcc_plots', exist_ok=True)
+            plt.savefig(f'mfcc_plots/mfcc_{sample["id"]}.png', dpi=150)
+            plt.close()
+            features = torch.tensor(mfcc, dtype=torch.float32)
         else:
             features = AmplitudeToDB()(MelSpectrogram(sample_rate=SAMPLE_RATE)(waveform))
         

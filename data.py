@@ -92,7 +92,7 @@ def create_cifar_gs_classification_dataset(bsz=128, root="./data"):
 
     return trainloader, valloader, testloader, N_CLASSES, SEQ_LENGTH, IN_DIM
 
-def create_librosa_raw_classification_dataset(bsz=128, root="./data", max_samples=1000, num_mfcc=256, cache_dir="/export/work/apierro/datasets/cache"):
+def create_librosa_raw_classification_dataset(bsz=128, root="./data", max_samples=1000, num_mfcc=80, cache_dir="/export/work/apierro/datasets/cache"):
     
     print("[*] Generating LibriSpeech ASR Dataset")
 
