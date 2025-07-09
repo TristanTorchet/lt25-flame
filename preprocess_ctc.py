@@ -24,7 +24,8 @@ class LibriSpeechASRDataset(Dataset):
                  num_mfcc=256,
                  use_mfcc=True,
                  max_samples=None,
-                 tokenizer=None):
+                 tokenizer=None,
+                 streaming=False):
         """
         LibriSpeech dataset for ASR with audio preprocessing
         
@@ -38,6 +39,7 @@ class LibriSpeechASRDataset(Dataset):
             use_mfcc: Whether to use MFCC features or mel-spectrograms
             max_samples: Maximum number of samples to process
             tokenizer: Text tokenizer for labels (optional)
+            streaming: Whether to use streaming mode for large datasets
         """
         
         self.max_audio_length = max_audio_length
@@ -48,14 +50,26 @@ class LibriSpeechASRDataset(Dataset):
         self.use_mfcc = use_mfcc
         self.max_samples = max_samples
         self.tokenizer = tokenizer
+        self.streaming = streaming
         
         # Load LibriSpeech dataset
         print(f"Loading LibriSpeech {split} split...")
-        self.dataset = load_dataset("openslr/librispeech_asr", split=split, trust_remote_code=True)
+        self.dataset = load_dataset("openslr/librispeech_asr", split=split, trust_remote_code=True, streaming=streaming)
         
         # Initialize transforms
-        self.mfcc_transform = MFCC(sample_rate=SAMPLE_RATE, n_mfcc=num_mfcc) if use_mfcc else None
-        
+        self.mfcc_transform = MFCC(
+            sample_rate=SAMPLE_RATE,
+            n_mfcc=num_mfcc,
+            melkwargs={
+                'n_fft': 400,
+                'n_mels': 40,
+                'hop_length': 160,
+                'win_length': 400,
+                'f_min': 0.0,
+                'f_max': SAMPLE_RATE // 2
+            }
+        ) if use_mfcc else None
+
         # Prepare dataset
         self.prepare_dataset()
         
@@ -64,17 +78,16 @@ class LibriSpeechASRDataset(Dataset):
 
     def create_character_tokenizer(self):
         """Create a simple character-level tokenizer"""
-        # Collect all characters from the dataset
-        chars = set()
-        for sample in self.dataset:
-            chars.update(sample['text'].lower())
+        chars = [
+            '<blank>',  # 0 - CTC blank token
+            ' ',        # 1 - space
+            "'",        # 2 - apostrophe
+        ] + [chr(i) for i in range(ord('a'), ord('z') + 1)]  # 3-28 - letters
         
-        # Create vocab (add special tokens)
-        vocab = ['<pad>', '<unk>', '<sos>', '<eos>'] + sorted(list(chars))
         
         # Create mappings
-        char_to_idx = {char: idx for idx, char in enumerate(vocab)}
-        idx_to_char = {idx: char for idx, char in enumerate(vocab)}
+        char_to_idx = {char: idx for idx, char in enumerate(chars)}
+        idx_to_char = {idx: char for idx, char in enumerate(chars)}
         
         return char_to_idx, idx_to_char
 
@@ -125,7 +138,8 @@ class LibriSpeechASRDataset(Dataset):
         self.max_length = max(audio_lengths) if audio_lengths else 0
         self.avg_length = sum(audio_lengths) / len(audio_lengths) if audio_lengths else 0
         
-        print(f"Filtered dataset: {len(self.samples)} samples (from {len(self.dataset)} original)")
+        if not self.streaming:
+            print(f"Filtered dataset: {len(self.samples)} samples (from {len(self.dataset)} original)")
 
     def clean_text(self, text):
         """Clean and normalize text"""
@@ -139,16 +153,15 @@ class LibriSpeechASRDataset(Dataset):
         text = re.sub(r'[^a-z0-9\s\.\,\?\!\-\']', '', text)
         
         return text
-
+    
     def tokenize_text(self, text):
-        """Convert text to token indices using character tokenizer"""
-        tokens = ['<sos>']
+        """tokenization"""
+        tokens = []
         for char in text:
             if char in self.char_to_idx:
                 tokens.append(char)
             else:
-                tokens.append('<unk>')
-        tokens.append('<eos>')
+                tokens.append('<unk>')  # Only if you want OOV handling
         
         return [self.char_to_idx[token] for token in tokens]
 
@@ -177,9 +190,9 @@ class LibriSpeechASRDataset(Dataset):
             waveform = waveform.mean(0)
         
         # Apply augmentations (only during training)
-        if self.dataset.split._name.startswith('train'):
-            waveform = self.time_shift(waveform)
-            waveform = self.add_background_noise(waveform)
+        # if self.dataset.split._name.startswith('train'):
+        #     waveform = self.time_shift(waveform)
+        #     waveform = self.add_background_noise(waveform)
         
         # Normalize audio
         waveform = waveform / (waveform.abs().max() + 1e-8)
@@ -314,7 +327,7 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256):
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False):
     """Create train and validation dataloaders for ASR"""
     
     # Create datasets
@@ -322,12 +335,14 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         split="test.clean",
         max_samples=max_samples,
         num_mfcc=num_mfcc,
+        streaming=streaming,
     )
     
     val_dataset = LibriSpeechASRDataset(
         split="test.other",
-        max_samples=max_samples//5
+        max_samples=max_samples//5,
         num_mfcc=num_mfcc,
+        streaming=streaming,
     )
     
     # Choose collate function based on model type
@@ -354,7 +369,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
 def create_ctc_loss_function(char_to_idx):
     """Create CTC loss function with blank token"""
     # CTC needs a blank token (usually index 0)
-    blank_idx = char_to_idx['<pad>']  # Use pad as blank
+    blank_idx = char_to_idx['<blank>']  
     return torch.nn.CTCLoss(blank=blank_idx, reduction='mean', zero_infinity=True)
 
 
@@ -362,18 +377,21 @@ def create_ctc_loss_function(char_to_idx):
 if __name__ == "__main__":
     # Test with CTC collate function
     train_loader, val_loader, char_to_idx, idx_to_char = create_asr_dataloaders(
-        max_samples=100, 
-        use_ctc=True
+        max_samples=5, 
+        use_ctc=True,
+        streaming=True,
+        num_mfcc=13
     )
     
     print(f"Vocabulary size: {len(char_to_idx)}")
-    print(f"Blank token index: {char_to_idx['<pad>']}")
+    print(f"Blank token index: {char_to_idx['<blank>']}")
     
     # Print sample batch for CTC
     for batch in train_loader:
         print(f"Features shape: {batch['features'].shape}")
         print(f"Feature lengths: {batch['feature_lengths']}")
-        print(f"Targets shape: {batch['targets'].shape}")  # Concatenated
+        print(f"Targets shape after concat: {batch['targets'].shape}")  # Concatenated
+        print(f"Target lengths element one: {batch['target_lengths'][0]}")
         print(f"Target lengths: {batch['target_lengths']}")
         print(f"Sample texts: {batch['texts'][:2]}")
         
