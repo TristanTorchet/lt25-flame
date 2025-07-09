@@ -8,6 +8,7 @@ from torchaudio.transforms import MFCC, MelSpectrogram, AmplitudeToDB
 from datasets import load_dataset
 import re
 from collections import defaultdict
+import aiohttp
 
 SAMPLE_RATE = 16000
 
@@ -24,12 +25,13 @@ class LibriSpeechASRDataset(Dataset):
                  num_mfcc=256,
                  use_mfcc=True,
                  max_samples=None,
-                 tokenizer=None):
+                 tokenizer=None,
+                 cache_dir="/export/work/apierro/datasets/cache"):
         """
         LibriSpeech dataset for ASR with audio preprocessing
         
         Args:
-            split: LibriSpeech split ("train.100", "train.360", "train.500", "validation.clean", "test.clean")
+            split: LibriSpeech split ("train.100", "train.360", "train.500", "validation", "test")
             max_audio_length: Maximum audio length in samples
             min_audio_length: Minimum audio length in samples
             background_frequency: Probability of adding background noise
@@ -48,13 +50,20 @@ class LibriSpeechASRDataset(Dataset):
         self.use_mfcc = use_mfcc
         self.max_samples = max_samples
         self.tokenizer = tokenizer
-        
+        self.cache_dir = cache_dir
+
         # Load LibriSpeech dataset
         print(f"Loading LibriSpeech {split} split...")
-        self.dataset = load_dataset("openslr/librispeech_asr", split=split, trust_remote_code=True)
+        self.dataset = load_dataset(
+            "librispeech_asr",
+            "clean",
+            split=split,
+            storage_options={'client_kwargs': {'timeout': aiohttp.ClientTimeout(total=3600)}},
+            cache_dir=cache_dir
+        )
         
         # Initialize transforms
-        self.mfcc_transform = MFCC(sample_rate=SAMPLE_RATE, n_mfcc=num_mfcc) if use_mfcc else None
+        self.mfcc_transform = MFCC(sample_rate=SAMPLE_RATE, n_mfcc=256, melkwargs={'n_mels': 256}) if use_mfcc else None
         
         # Prepare dataset
         self.prepare_dataset()
@@ -314,20 +323,22 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256):
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, cache_dir="/export/work/apierro/datasets/cache"):
     """Create train and validation dataloaders for ASR"""
     
     # Create datasets
     train_dataset = LibriSpeechASRDataset(
-        split="test.clean",
+        split="train.360",
         max_samples=max_samples,
         num_mfcc=num_mfcc,
+        cache_dir=cache_dir,
     )
     
     val_dataset = LibriSpeechASRDataset(
-        split="test.other",
-        max_samples=max_samples//5
+        split="test",
+        max_samples=max_samples//5,
         num_mfcc=num_mfcc,
+        cache_dir=cache_dir,
     )
     
     # Choose collate function based on model type
