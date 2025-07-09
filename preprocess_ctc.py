@@ -205,20 +205,21 @@ class LibriSpeechASRDataset(Dataset):
             # Add normalization for better visualization
             mfcc = 20 * np.log10(mfcc + 1e-10)
             mfcc = (mfcc - np.mean(mfcc, axis=1, keepdims=True)) + 1e-8
+
             # # Periodically save MFCC visualizations
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(10, 4))
-            plt.imshow(mfcc, aspect='auto', origin='lower', interpolation='none', cmap='jet')
-            plt.colorbar(format='%+2.0f dB')
-            plt.title(f'MFCC - {sample["id"]}')
-            plt.ylabel('MFCC Coefficients')
-            plt.xlabel('Time Frames')
-            plt.tight_layout()
+            # import matplotlib.pyplot as plt
+            # plt.figure(figsize=(10, 4))
+            # plt.imshow(mfcc, aspect='auto', origin='lower', interpolation='none', cmap='jet')
+            # plt.colorbar(format='%+2.0f dB')
+            # plt.title(f'MFCC - {sample["id"]}')
+            # plt.ylabel('MFCC Coefficients')
+            # plt.xlabel('Time Frames')
+            # plt.tight_layout()
             
-            # Create directory if it doesn't exist
-            os.makedirs('mfcc_plots', exist_ok=True)
-            plt.savefig(f'mfcc_plots/mfcc_{sample["id"]}.png', dpi=150)
-            plt.close()
+            # # Create directory if it doesn't exist
+            # os.makedirs('mfcc_plots', exist_ok=True)
+            # plt.savefig(f'mfcc_plots/mfcc_{sample["id"]}.png', dpi=150)
+            # plt.close()
             features = torch.tensor(mfcc, dtype=torch.float32)
         else:
             features = AmplitudeToDB()(MelSpectrogram(sample_rate=SAMPLE_RATE)(waveform))

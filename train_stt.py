@@ -25,7 +25,7 @@ def parse_args():
     # Dataset args
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--max_samples", type=int, default=1000, help="Maximum samples for ASR dataset")
-    parser.add_argument("--num_mfcc", type=int, default=256, help="Number of MFCC features")
+    parser.add_argument("--num_mfcc", type=int, default=80, help="Number of MFCC features")
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
     
     # Model args
@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     
     # Logging args
-    parser.add_argument("--log_interval", type=int, default=1)
+    parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--save_dir", type=str, default="./checkpoints")
     parser.add_argument("--model_name", type=str, default="hgrn_asr", help="Name of the model for saving")
     parser.add_argument("--disable_colors", action="store_true", help="Disable colored output")
