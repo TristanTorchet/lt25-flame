@@ -28,6 +28,10 @@ dependencies = [
     'tiktoken',
     'tensorboard',
     "torchvision>=0.22.1",
+    "ipython>=8.37.0",
+    "soundfile>=0.13.1",
+    "librosa>=0.11.0",
+    "torchaudio>=2.7.1",
 ]
 
 [project.optional-dependencies]
