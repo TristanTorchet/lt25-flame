@@ -8,6 +8,9 @@ import soundfile as sf
 import tempfile
 import os
 
+os.environ['HF_DATASETS_CACHE'] = os.path.expanduser('~/.cache/huggingface/datasets')
+
+
 # Initialize Dash app
 app = dash.Dash(__name__)
 
@@ -26,7 +29,6 @@ def load_dataset(max_samples=100, num_mfcc=80):
             max_samples=max_samples,
             use_ctc=True,
             num_mfcc=num_mfcc,
-            cache_dir="/export/work/apierro/datasets/cache"
         )
         
         # We need to access the raw dataset to get the audio data
@@ -35,7 +37,6 @@ def load_dataset(max_samples=100, num_mfcc=80):
             split="train.100",
             max_samples=max_samples,
             num_mfcc=num_mfcc,
-            cache_dir="/export/work/apierro/datasets/cache"
         )
         
         # Extract all samples for visualization, including raw audio
@@ -76,7 +77,7 @@ def create_mfcc_plot(features, sample_id):
     
     fig = go.Figure(data=go.Heatmap(
         z=mfcc,
-        colorscale='Viridis',
+        colorscale='jet',
         showscale=True,
         hovertemplate='Time: %{x}<br>MFCC: %{y}<br>Value: %{z}<extra></extra>'
     ))

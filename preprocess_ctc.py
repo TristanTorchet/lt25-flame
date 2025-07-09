@@ -14,6 +14,8 @@ SAMPLE_RATE = 16000
 
 os.environ["HF_DATASETS_DOWNLOAD_TIMEOUT"] = "3600"  # 1 hour
 os.environ["FSSPEC_HTTP_TIMEOUT"] = "3600"
+os.environ['HF_DATASETS_CACHE'] = os.path.expanduser('~/.cache/huggingface/datasets')
+
 
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
@@ -26,8 +28,7 @@ class LibriSpeechASRDataset(Dataset):
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
-                 streaming=False,
-                 cache_dir=None):
+                 streaming=False,):
         """
         LibriSpeech dataset for ASR with audio preprocessing
         
@@ -62,7 +63,6 @@ class LibriSpeechASRDataset(Dataset):
             split=split,
             trust_remote_code=True,
             streaming=streaming,
-            cache_dir=cache_dir
         )
         
         # Initialize transforms
@@ -287,7 +287,7 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, cache_dir=None):
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False):
     """Create train and validation dataloaders for ASR
     
     Args:
@@ -296,7 +296,6 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         use_ctc: Whether to use CTC-specific collate function
         num_mfcc: Number of MFCC features
         streaming: Whether to use streaming mode
-        cache_dir: Directory to cache downloaded datasets
     """
     
     # Create datasets
@@ -305,7 +304,6 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
-        cache_dir=cache_dir
     )
     
     val_dataset = LibriSpeechASRDataset(
@@ -313,7 +311,6 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         max_samples=max_samples//5,
         num_mfcc=num_mfcc,
         streaming=streaming,
-        cache_dir=cache_dir
     )
     
     test_dataset = LibriSpeechASRDataset(
@@ -321,7 +318,6 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         max_samples=max_samples//5,
         num_mfcc=num_mfcc,
         streaming=streaming,
-        cache_dir=cache_dir
     )
     
     collate_function = collate_fn_ctc 

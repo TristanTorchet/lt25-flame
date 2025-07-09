@@ -2,6 +2,12 @@
 
 This guide covers the installation process for the LT25 version of Flame, which uses a custom fork of flash-linear-attention.
 
+## Table of Contents
+1. [Setup](#setup)
+2. [Verification](#verification)
+3. [Notes](#notes)
+4. [Dashboard](#dashboard)
+
 ## Setup
 
 1. Clone the repository:
@@ -33,8 +39,6 @@ uv pip install -e ./flash-linear-attention --force-reinstall
 
 7. Modify permissions for .sh files to make them executable:
 ```bash
-chmod +x launch_training.sh
-chmod +x train.sh
 chmod +x train_timeseries.sh
 ```
 
@@ -42,6 +46,13 @@ chmod +x train_timeseries.sh
 ```bash
 ./train_timeseries.sh
 ```
+
+## Download the dataset (Librispeech)
+```bash
+uv run dowload_hf.py
+```
+In `download_hf.py` and `preprocess_ctc.py` you can see at the top that we defined `os.environ['HF_DATASETS_CACHE'] = os.path.expanduser('~/.cache/huggingface/datasets')` to help huggingface locate the dataset and avoid downloading it again.
+<font color="red">Note:</font> If you want to use a different cache directory, you can change the `HF_DATASETS_CACHE` environment variable in `download_hf.py` and `preprocess_ctc.py`.
 
 ## Verification
 
