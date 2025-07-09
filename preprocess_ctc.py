@@ -16,8 +16,8 @@ os.environ["FSSPEC_HTTP_TIMEOUT"] = "3600"
 
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
-                 max_audio_length=16000*10,  # 10 seconds max
-                 min_audio_length=16000*1,   # 1 second min
+                 max_audio_length=16000*20,  # 20 seconds max
+                 min_audio_length=16000*8,   # 8 seconds min
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,
@@ -123,9 +123,8 @@ class LibriSpeechASRDataset(Dataset):
             audio_length = len(audio_array)
             if audio_length < self.min_audio_length or audio_length > self.max_audio_length:
                 continue
-            
-            # Clean text
-            text = self.clean_text(text)
+
+            text = text.lower()
             
             # Tokenize text if using character tokenizer
             if self.tokenizer is None:
@@ -150,19 +149,6 @@ class LibriSpeechASRDataset(Dataset):
         
         if not self.streaming:
             print(f"Filtered dataset: {len(self.samples)} samples (from {len(self.dataset)} original)")
-
-    def clean_text(self, text):
-        """Clean and normalize text"""
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Remove extra whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Keep only letters, numbers, and basic punctuation
-        text = re.sub(r'[^a-z0-9\s\.\,\?\!\-\']', '', text)
-        
-        return text
     
     def tokenize_text(self, text):
         """tokenization"""
@@ -171,6 +157,7 @@ class LibriSpeechASRDataset(Dataset):
             if char in self.char_to_idx:
                 tokens.append(char)
             else:
+                print(f"Unknown character '{char}' in text: '{text}'")
                 tokens.append('<unk>')  # Only if you want OOV handling
         
         return [self.char_to_idx[token] for token in tokens]
@@ -233,54 +220,6 @@ class LibriSpeechASRDataset(Dataset):
         }
 
 
-def collate_fn(batch):
-    """Custom collate function for variable length sequences"""
-    # Sort batch by feature sequence length (descending)
-    batch = sorted(batch, key=lambda x: x['features'].size(-1), reverse=True)
-    
-    # Get dimensions
-    batch_size = len(batch)
-    feature_dim = batch[0]['features'].size(0)
-    max_feature_len = batch[0]['features'].size(1)
-    max_text_len = max([len(item['text_tokens']) for item in batch])
-    
-    # Initialize tensors
-    features = torch.zeros(batch_size, feature_dim, max_feature_len)
-    feature_lengths = torch.zeros(batch_size, dtype=torch.long)
-    text_tokens = torch.zeros(batch_size, max_text_len, dtype=torch.long)
-    text_lengths = torch.zeros(batch_size, dtype=torch.long)
-    
-    # Fill tensors
-    texts = []
-    speaker_ids = []
-    ids = []
-    
-    for i, item in enumerate(batch):
-        # Features
-        feat_len = item['features'].size(1)
-        features[i, :, :feat_len] = item['features']
-        feature_lengths[i] = feat_len
-        
-        # Text tokens
-        text_len = len(item['text_tokens'])
-        text_tokens[i, :text_len] = item['text_tokens']
-        text_lengths[i] = text_len
-        
-        # Other info
-        texts.append(item['text'])
-        speaker_ids.append(item['speaker_id'])
-        ids.append(item['id'])
-    
-    return {
-        'features': features,
-        'feature_lengths': feature_lengths,
-        'text_tokens': text_tokens,
-        'text_lengths': text_lengths,
-        'texts': texts,
-        'speaker_ids': speaker_ids,
-        'ids': ids
-    }
-
 
 def collate_fn_ctc(batch):
     """CTC-specific collate function"""
@@ -314,11 +253,10 @@ def collate_fn_ctc(batch):
         # For CTC: concatenate targets (without <sos>/<eos>)
         # Remove special tokens for CTC
         tokens = item['text_tokens']
-        # Filter out special tokens (assuming they are first few indices)
-        clean_tokens = [t for t in tokens if t >= 4]  # Skip <pad>, <unk>, <sos>, <eos>
+
         
-        all_targets.extend(clean_tokens)
-        target_lengths.append(len(clean_tokens))
+        all_targets.extend(tokens)
+        target_lengths.append(len(tokens))
         
         # Other info
         texts.append(item['text'])
@@ -366,8 +304,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         cache_dir=cache_dir
     )
     
-    # Choose collate function based on model type
-    collate_function = collate_fn_ctc if use_ctc else collate_fn
+    collate_function = collate_fn_ctc 
     
     # Create dataloaders
     train_loader = DataLoader(

@@ -106,6 +106,6 @@ def create_librosa_raw_classification_dataset(bsz=128, root="./data", max_sample
                         num_mfcc=num_mfcc,
                         cache_dir=cache_dir)
 
-    # Return: train_loader, val_loader, test_loader, n_classes, seq_len, input_dim
+    # Return: train_loader, val_loader, test_loader, n_classes, seq_len, input_dim, char_to_idx, idx_to_char
     # For ASR: seq_len is variable, so we use -1, input_dim is num_mfcc
-    return train_loader, val_loader, val_loader, len(char_to_idx), -1, num_mfcc
+    return train_loader, val_loader, val_loader, len(char_to_idx), -1, num_mfcc, char_to_idx, idx_to_char

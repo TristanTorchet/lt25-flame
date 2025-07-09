@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument("--model_name", type=str, default="hgrn_timeseries", help="Name of the model for saving")
     parser.add_argument("--disable_colors", action="store_true", help="Disable colored output")
     parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--print_samples", action="store_true", help="Print sample predictions during training")
     
     return parser.parse_args()
 
@@ -141,7 +142,40 @@ def calculate_sequence_metrics(predictions: list, targets: list) -> dict:
     return metrics
 
 
-def evaluate_model(model, dataloader, device):
+def decode_tokens_to_text(tokens, idx_to_char):
+    """Convert list of token indices back to readable text."""
+    if not tokens:
+        return ""
+    
+    text = ""
+    for token_idx in tokens:
+        if token_idx in idx_to_char:
+            char = idx_to_char[token_idx]
+            if char == '<blank>':
+                continue  # Skip blank tokens
+            text += char
+        else:
+            text += f"<UNK:{token_idx}>"
+    return text
+
+
+def print_sample_predictions(predictions, targets, idx_to_char, num_samples=3, prefix=""):
+    """Print sample predictions and targets in readable format."""
+    print(f"\n{prefix} Sample Predictions vs Targets:")
+    print("=" * 80)
+    
+    for i in range(min(num_samples, len(predictions))):
+        pred_text = decode_tokens_to_text(predictions[i], idx_to_char)
+        target_text = decode_tokens_to_text(targets[i], idx_to_char)
+        
+        print(f"Sample {i+1}:")
+        print(f"  Prediction: '{pred_text}'")
+        print(f"  Target:     '{target_text}'")
+        print(f"  Match:      {predictions[i] == targets[i]}")
+        print()
+
+
+def evaluate_model(model, dataloader, device, idx_to_char=None, print_samples=False):
     """Evaluate ASR model with comprehensive sequence-level metrics."""
     model.eval()
     total_loss = 0
@@ -186,13 +220,17 @@ def evaluate_model(model, dataloader, device):
     metrics = calculate_sequence_metrics(all_predictions, all_targets)
     avg_loss = total_loss / len(dataloader)
     
+    # Print sample predictions if requested
+    if print_samples and idx_to_char is not None:
+        print_sample_predictions(all_predictions, all_targets, idx_to_char, num_samples=3, prefix="EVALUATION")
+    
     # Return main accuracy metric for backward compatibility
     accuracy = 1.0 - metrics['cer']  # Use CER as primary metric (lower is better)
     
     return avg_loss, accuracy, metrics
 
 
-def compute_training_metrics(model, batch, device):
+def compute_training_metrics(model, batch, device, idx_to_char=None, print_samples=False):
     """Compute sequence metrics for a training batch."""
     model.eval()
     
@@ -216,6 +254,10 @@ def compute_training_metrics(model, batch, device):
             target_tokens = labels[start_idx:start_idx + target_len].tolist()
             batch_targets.append(target_tokens)
         
+        # Print sample predictions if requested
+        if print_samples and idx_to_char is not None:
+            print_sample_predictions(decoded_seqs, batch_targets, idx_to_char, num_samples=2, prefix="TRAINING")
+        
         # Calculate metrics for this batch
         metrics = calculate_sequence_metrics(decoded_seqs, batch_targets)
     
@@ -223,7 +265,7 @@ def compute_training_metrics(model, batch, device):
     return metrics
 
 
-def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_interval, logger, max_grad_norm=1.0, use_wandb=False):
+def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_interval, logger, max_grad_norm=1.0, use_wandb=False, idx_to_char=None, print_samples=False):
     """Train ASR model for one epoch."""
     model.train()
     total_loss = 0
@@ -232,7 +274,6 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
     # Accumulate training metrics
     train_metrics_accumulator = {
         'cer': 0.0,
-        'wer': 0.0,
         'exact_match': 0.0,
         'token_accuracy': 0.0,
         'total_sequences': 0,
@@ -268,18 +309,20 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
         
         total_loss += loss.item()
         
-        if batch_idx % log_interval == 0 and batch_idx > 0:
+        if batch_idx % log_interval == 0 and batch_idx >= 0:
             avg_loss = total_loss / (batch_idx + 1)
             lr = scheduler.get_last_lr()[0]
             global_step = (epoch - 1) * num_batches + batch_idx
             total_steps = epoch * num_batches  # Approximate for current epoch
             
-            # Compute training metrics for this batch
-            batch_metrics = compute_training_metrics(model, batch, device)
+            # Compute training metrics for this batch (print samples based on flag and frequency)
+            should_print = print_samples and batch_idx % log_interval == 0  # Print every log interval if enabled
+            if should_print:
+                print(f"\n[DEBUG] Printing training samples for batch {batch_idx}, epoch {epoch}")
+            batch_metrics = compute_training_metrics(model, batch, device, idx_to_char, should_print)
             
             # Accumulate metrics
             train_metrics_accumulator['cer'] += batch_metrics['cer'] * batch_metrics['total_sequences']
-            train_metrics_accumulator['wer'] += batch_metrics['wer'] * batch_metrics['total_sequences']
             train_metrics_accumulator['exact_match'] += batch_metrics['exact_match'] * batch_metrics['total_sequences']
             train_metrics_accumulator['token_accuracy'] += batch_metrics['token_accuracy'] * batch_metrics['total_sequences']
             train_metrics_accumulator['total_sequences'] += batch_metrics['total_sequences']
@@ -304,12 +347,10 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
     # Compute epoch-level training metrics
     epoch_train_metrics = {
         'cer': train_metrics_accumulator['cer'] / max(train_metrics_accumulator['total_sequences'], 1),
-        'wer': train_metrics_accumulator['wer'] / max(train_metrics_accumulator['total_sequences'], 1),
         'exact_match': train_metrics_accumulator['exact_match'] / max(train_metrics_accumulator['total_sequences'], 1),
         'token_accuracy': train_metrics_accumulator['token_accuracy'] / max(train_metrics_accumulator['total_sequences'], 1),
         'total_sequences': train_metrics_accumulator['total_sequences'],
         'total_chars': train_metrics_accumulator['total_sequences'],  # Approximation
-        'total_words': train_metrics_accumulator['total_sequences'],  # Approximation
     }
     
     return total_loss / num_batches, epoch_train_metrics
@@ -359,7 +400,7 @@ def main():
     device = torch.device(args.device)
 
     # Create ASR dataset
-    train_loader, val_loader, test_loader, n_classes, seq_len, input_dim = create_librosa_raw_classification_dataset(
+    train_loader, val_loader, test_loader, n_classes, seq_len, input_dim, char_to_idx, idx_to_char = create_librosa_raw_classification_dataset(
         bsz=args.batch_size,
         max_samples=args.max_samples,
         num_mfcc=args.num_mfcc,
@@ -464,17 +505,25 @@ def main():
     # Training loop
     best_val_acc = 0.0
     
+    print(f"[DEBUG] Sample printing enabled: {args.print_samples}")
+    if args.print_samples:
+        print(f"[DEBUG] Will print training samples every {args.log_interval} batches")
+        print(f"[DEBUG] Will print validation samples every 2 epochs")
+    
     for epoch in range(args.epochs):
         logger.log_epoch_start(epoch + 1, args.epochs)
         
         # Train
         train_loss, train_metrics = train_epoch(
             model, train_loader, optimizer, scheduler, device, epoch + 1, 
-            args.log_interval, logger, args.max_grad_norm, args.use_wandb
+            args.log_interval, logger, args.max_grad_norm, args.use_wandb, idx_to_char, args.print_samples
         )
         
-        # Validate
-        val_loss, val_acc, val_metrics = evaluate_model(model, val_loader, device)
+        # Validate (print samples every 2 epochs if enabled)
+        print_val_samples = args.print_samples and (epoch + 1) % 2 == 0
+        if print_val_samples:
+            print(f"\n[DEBUG] Printing validation samples for epoch {epoch + 1}")
+        val_loss, val_acc, val_metrics = evaluate_model(model, val_loader, device, idx_to_char, print_val_samples)
         
         # Check if this is the best model
         is_best = val_acc > best_val_acc
@@ -519,8 +568,8 @@ def main():
                 "val/best_accuracy": best_val_acc
             })
     
-    # Final evaluation on test set
-    test_loss, test_acc, test_metrics = evaluate_model(model, test_loader, device)
+    # Final evaluation on test set (print samples if enabled)
+    test_loss, test_acc, test_metrics = evaluate_model(model, test_loader, device, idx_to_char, print_samples=args.print_samples)
     
     # Calculate total training time
     total_time = time.time() - logger.start_time
