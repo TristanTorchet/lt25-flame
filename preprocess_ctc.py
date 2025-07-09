@@ -17,11 +17,11 @@ os.environ["FSSPEC_HTTP_TIMEOUT"] = "3600"
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
                  max_audio_length=16000*20,  # 20 seconds max
-                 min_audio_length=16000*8,   # 8 seconds min
+                 min_audio_length=16000*.1,   # 8 seconds min
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,
-                 num_mfcc=256,
+                 num_mfcc=13,
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
@@ -73,8 +73,8 @@ class LibriSpeechASRDataset(Dataset):
             melkwargs={
                 'n_fft': 400,
                 'n_mels': n_mels,
-                'hop_length': 160,
-                'win_length': 400,
+                'hop_length': 10,
+                'win_length': 25,
                 'f_min': 0.0,
                 'f_max': SAMPLE_RATE // 2
             }
@@ -84,7 +84,6 @@ class LibriSpeechASRDataset(Dataset):
         self.prepare_dataset()
         
         print(f"Dataset prepared with {len(self.samples)} samples")
-        print(f"Audio length stats: min={self.min_length:.2f}s, max={self.max_length:.2f}s, avg={self.avg_length:.2f}s")
 
     def create_character_tokenizer(self):
         """Create a simple character-level tokenizer"""
@@ -122,7 +121,7 @@ class LibriSpeechASRDataset(Dataset):
             # Filter by audio length
             audio_length = len(audio_array)
             if audio_length < self.min_audio_length or audio_length > self.max_audio_length:
-                continue
+                return {}
 
             text = text.lower()
             
