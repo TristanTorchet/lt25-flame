@@ -3,8 +3,9 @@ import random
 import torch
 import torchaudio
 import numpy as np
+import librosa
 from torch.utils.data import Dataset, DataLoader
-from torchaudio.transforms import MFCC, MelSpectrogram, AmplitudeToDB
+from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
 from datasets import load_dataset
 import re
 from collections import defaultdict
@@ -13,20 +14,21 @@ SAMPLE_RATE = 16000
 
 os.environ["HF_DATASETS_DOWNLOAD_TIMEOUT"] = "3600"  # 1 hour
 os.environ["FSSPEC_HTTP_TIMEOUT"] = "3600"
+os.environ['HF_DATASETS_CACHE'] = os.path.expanduser('~/.cache/huggingface/datasets')
+
 
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
-                 max_audio_length=16000*20,  # 20 seconds max
-                 min_audio_length=16000*.1,   # 8 seconds min
+                 max_audio_length=16000*30,  # 30 seconds max
+                 min_audio_length=16000*1,   # 1 second min
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,
-                 num_mfcc=13,
+                 num_mfcc=80,
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
-                 streaming=False,
-                 cache_dir=None):
+                 streaming=False,):
         """
         LibriSpeech dataset for ASR with audio preprocessing
         
@@ -61,24 +63,32 @@ class LibriSpeechASRDataset(Dataset):
             split=split,
             trust_remote_code=True,
             streaming=streaming,
-            cache_dir=cache_dir
         )
         
         # Initialize transforms
         # Ensure n_mels >= num_mfcc to avoid ValueError
-        n_mels = max(num_mfcc, 40)
+        self.num_mfcc = num_mfcc
+        self.n_fft = 400
+        self.hop_length = 10
+        self.win_length = 25
+        self.n_mels = max(num_mfcc, 40)
+        self.f_min = 0.0
+        self.f_max = SAMPLE_RATE // 2
+
         self.mfcc_transform = MFCC(
             sample_rate=SAMPLE_RATE,
             n_mfcc=num_mfcc,
             melkwargs={
-                'n_fft': 400,
+                'n_fft': self.n_fft,
                 'n_mels': n_mels,
-                'hop_length': 10,
-                'win_length': 25,
+                'hop_length': self.hop_length,
+                'win_length': self.win_length,
                 'f_min': 0.0,
                 'f_max': SAMPLE_RATE // 2
             }
         ) if use_mfcc else None
+        # Store MFCC parameters for librosa
+
 
         # Prepare dataset
         self.prepare_dataset()
@@ -181,18 +191,6 @@ class LibriSpeechASRDataset(Dataset):
         # Convert to tensor
         waveform = torch.tensor(audio_array, dtype=torch.float32)
         
-        # Ensure single channel
-        if waveform.dim() > 1:
-            waveform = waveform.mean(0)
-        
-        # Apply augmentations (only during training)
-        # if self.dataset.split._name.startswith('train'):
-        #     waveform = self.time_shift(waveform)
-        #     waveform = self.add_background_noise(waveform)
-        
-        # Normalize audio
-        waveform = waveform / (waveform.abs().max() + 1e-8)
-        
         return waveform
 
     def __len__(self):
@@ -206,7 +204,37 @@ class LibriSpeechASRDataset(Dataset):
         
         # Extract features
         if self.use_mfcc:
-            features = self.mfcc_transform(waveform)
+            # Use librosa for MFCC extraction
+            waveform_np = waveform.numpy()
+            mfcc = librosa.feature.melspectrogram(
+                y=waveform_np,
+                sr=SAMPLE_RATE,
+                n_mels=self.n_mels,
+                hop_length=self.hop_length,
+                win_length=self.win_length,
+                n_fft=self.n_fft,
+                fmin=self.f_min,
+                fmax=self.f_max
+            )
+            # Add normalization for better visualization
+            mfcc = 20 * np.log10(mfcc + 1e-10)
+            mfcc = (mfcc - np.mean(mfcc, axis=1, keepdims=True)) + 1e-8
+
+            # # Periodically save MFCC visualizations
+            # import matplotlib.pyplot as plt
+            # plt.figure(figsize=(10, 4))
+            # plt.imshow(mfcc, aspect='auto', origin='lower', interpolation='none', cmap='jet')
+            # plt.colorbar(format='%+2.0f dB')
+            # plt.title(f'MFCC - {sample["id"]}')
+            # plt.ylabel('MFCC Coefficients')
+            # plt.xlabel('Time Frames')
+            # plt.tight_layout()
+            
+            # # Create directory if it doesn't exist
+            # os.makedirs('mfcc_plots', exist_ok=True)
+            # plt.savefig(f'mfcc_plots/mfcc_{sample["id"]}.png', dpi=150)
+            # plt.close()
+            features = torch.tensor(mfcc, dtype=torch.float32)
         else:
             features = AmplitudeToDB()(MelSpectrogram(sample_rate=SAMPLE_RATE)(waveform))
         
@@ -274,7 +302,7 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, cache_dir=None):
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False):
     """Create train and validation dataloaders for ASR
     
     Args:
@@ -283,7 +311,6 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         use_ctc: Whether to use CTC-specific collate function
         num_mfcc: Number of MFCC features
         streaming: Whether to use streaming mode
-        cache_dir: Directory to cache downloaded datasets
     """
     
     # Create datasets
@@ -292,15 +319,20 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
-        cache_dir=cache_dir
     )
     
     val_dataset = LibriSpeechASRDataset(
+        split="validation",
+        max_samples=max_samples//5,
+        num_mfcc=num_mfcc,
+        streaming=streaming,
+    )
+    
+    test_dataset = LibriSpeechASRDataset(
         split="test",
         max_samples=max_samples//5,
         num_mfcc=num_mfcc,
         streaming=streaming,
-        cache_dir=cache_dir
     )
     
     collate_function = collate_fn_ctc 
@@ -320,7 +352,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         collate_fn=collate_function
     )
     
-    return train_loader, val_loader, train_dataset.char_to_idx, train_dataset.idx_to_char
+    return train_loader, val_loader, test_dataset, train_dataset.char_to_idx, train_dataset.idx_to_char
 
 
 def create_ctc_loss_function(char_to_idx):

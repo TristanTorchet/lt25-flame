@@ -9,7 +9,7 @@ import os
 import time
 from datetime import datetime
 import torch
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_cosine_schedule_with_warmup
 import wandb
 import shutil
 import json
@@ -23,9 +23,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train HGRN on ASR")
     
     # Dataset args
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--max_samples", type=int, default=1000, help="Maximum samples for ASR dataset")
-    parser.add_argument("--num_mfcc", type=int, default=256, help="Number of MFCC features")
+    parser.add_argument("--num_mfcc", type=int, default=80, help="Number of MFCC features")
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
     
     # Model args
@@ -37,7 +37,7 @@ def parse_args():
     
     # Training args
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
@@ -48,10 +48,12 @@ def parse_args():
     # Logging args
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--save_dir", type=str, default="./checkpoints")
-    parser.add_argument("--model_name", type=str, default="hgrn_timeseries", help="Name of the model for saving")
+    parser.add_argument("--model_name", type=str, default="hgrn_asr", help="Name of the model for saving")
     parser.add_argument("--disable_colors", action="store_true", help="Disable colored output")
     parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--print_samples", action="store_true", help="Print sample predictions during training")
+    parser.add_argument("--resume_checkpoint", type=str, default=None, help="Path to checkpoint to resume training from")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Number of steps to accumulate gradients")
     
     return parser.parse_args()
 
@@ -82,7 +84,7 @@ def levenshtein_distance(seq1: list, seq2: list) -> int:
     return previous_row[-1]
 
 
-def calculate_sequence_metrics(predictions: list, targets: list) -> dict:
+def calculate_sequence_metrics(predictions: list, targets: list, idx_to_char: dict = None) -> dict:
     """Calculate comprehensive sequence-level metrics."""
     metrics = {
         'cer': 0.0,
@@ -112,15 +114,42 @@ def calculate_sequence_metrics(predictions: list, targets: list) -> dict:
         if hasattr(target, 'tolist'):
             target = target.tolist()
         
-        # Character Error Rate (CER)
-        char_errors = levenshtein_distance(pred, target)
-        total_char_errors += char_errors
-        total_chars += len(target)
-        
-        # Word Error Rate (WER) - treat tokens as words for now
-        word_errors = levenshtein_distance(pred, target)
-        total_word_errors += word_errors
-        total_words += len(target)
+        # If idx_to_char is provided, convert tokens to character sequences for true CER
+        if idx_to_char is not None:
+            pred_chars = []
+            target_chars = []
+            
+            for token_idx in pred:
+                if token_idx in idx_to_char:
+                    char = idx_to_char[token_idx]
+                    if char != '<blank>':  # Skip blank tokens
+                        pred_chars.append(char)
+            
+            for token_idx in target:
+                if token_idx in idx_to_char:
+                    char = idx_to_char[token_idx]
+                    if char != '<blank>':  # Skip blank tokens
+                        target_chars.append(char)
+            
+            # Character Error Rate (CER) - true character-level comparison
+            char_errors = levenshtein_distance(pred_chars, target_chars)
+            total_char_errors += char_errors
+            total_chars += len(target_chars)
+            
+            # Word Error Rate (WER) - treat tokens as words for now
+            word_errors = levenshtein_distance(pred, target)
+            total_word_errors += word_errors
+            total_words += len(target)
+        else:
+            # Fallback to token-level comparison if no character mapping
+            char_errors = levenshtein_distance(pred, target)
+            total_char_errors += char_errors
+            total_chars += len(target)
+            
+            # Word Error Rate (WER) - treat tokens as words for now
+            word_errors = levenshtein_distance(pred, target)
+            total_word_errors += word_errors
+            total_words += len(target)
         
         # Exact sequence match
         if pred == target:
@@ -203,21 +232,22 @@ def evaluate_model(model, dataloader, device, idx_to_char=None, print_samples=Fa
             total_loss += loss.item()
             
             # Decode sequences for evaluation
-            decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=False)
+            decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=True)
             
             # Extract target sequences from batched format
             batch_targets = []
+            start_idx = 0
             for i in range(len(decoded_seqs)):
                 target_len = target_lengths[i].item()
-                start_idx = sum(target_lengths[:i])
                 target_tokens = labels[start_idx:start_idx + target_len].tolist()
                 batch_targets.append(target_tokens)
+                start_idx += target_len
             
             all_predictions.extend(decoded_seqs)
             all_targets.extend(batch_targets)
     
     # Calculate comprehensive metrics
-    metrics = calculate_sequence_metrics(all_predictions, all_targets)
+    metrics = calculate_sequence_metrics(all_predictions, all_targets, idx_to_char)
     avg_loss = total_loss / len(dataloader)
     
     # Print sample predictions if requested
@@ -248,24 +278,25 @@ def compute_training_metrics(model, batch, device, idx_to_char=None, print_sampl
         
         # Extract target sequences from batched format
         batch_targets = []
+        start_idx = 0
         for i in range(len(decoded_seqs)):
             target_len = target_lengths[i].item()
-            start_idx = sum(target_lengths[:i])
             target_tokens = labels[start_idx:start_idx + target_len].tolist()
             batch_targets.append(target_tokens)
+            start_idx += target_len
         
         # Print sample predictions if requested
         if print_samples and idx_to_char is not None:
             print_sample_predictions(decoded_seqs, batch_targets, idx_to_char, num_samples=2, prefix="TRAINING")
         
         # Calculate metrics for this batch
-        metrics = calculate_sequence_metrics(decoded_seqs, batch_targets)
+        metrics = calculate_sequence_metrics(decoded_seqs, batch_targets, idx_to_char)
     
     model.train()
     return metrics
 
 
-def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_interval, logger, max_grad_norm=1.0, use_wandb=False, idx_to_char=None, print_samples=False):
+def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_interval, logger, max_grad_norm=1.0, use_wandb=False, idx_to_char=None, print_samples=False, gradient_accumulation_steps=1):
     """Train ASR model for one epoch."""
     model.train()
     total_loss = 0
@@ -274,9 +305,12 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
     # Accumulate training metrics
     train_metrics_accumulator = {
         'cer': 0.0,
+        'wer': 0.0,
         'exact_match': 0.0,
         'token_accuracy': 0.0,
         'total_sequences': 0,
+        'total_chars': 0,
+        'total_words': 0,
         'batch_count': 0
     }
     
@@ -291,8 +325,6 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
         # Transpose features to match model input format [batch, seq_len, feature_dim]
         inputs = inputs.transpose(1, 2)
         
-        optimizer.zero_grad()
-        
         outputs = model(
             input_ids=inputs, 
             labels=labels,
@@ -302,12 +334,21 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
         
         loss = outputs.loss
         
+        # Scale loss by gradient accumulation steps
+        loss = loss / gradient_accumulation_steps
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-        optimizer.step()
-        scheduler.step()
         
-        total_loss += loss.item()
+        total_loss += loss.item() * gradient_accumulation_steps
+        
+        # Only update optimizer and scheduler every gradient_accumulation_steps
+        if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+        else:
+            # For logging purposes, still calculate grad norm
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
         
         if batch_idx % log_interval == 0 and batch_idx >= 0:
             avg_loss = total_loss / (batch_idx + 1)
@@ -322,10 +363,13 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
             batch_metrics = compute_training_metrics(model, batch, device, idx_to_char, should_print)
             
             # Accumulate metrics
-            train_metrics_accumulator['cer'] += batch_metrics['cer'] * batch_metrics['total_sequences']
+            train_metrics_accumulator['cer'] += batch_metrics['cer'] * batch_metrics['total_chars']
+            train_metrics_accumulator['wer'] += batch_metrics['wer'] * batch_metrics['total_words']
             train_metrics_accumulator['exact_match'] += batch_metrics['exact_match'] * batch_metrics['total_sequences']
             train_metrics_accumulator['token_accuracy'] += batch_metrics['token_accuracy'] * batch_metrics['total_sequences']
             train_metrics_accumulator['total_sequences'] += batch_metrics['total_sequences']
+            train_metrics_accumulator['total_chars'] += batch_metrics['total_chars']
+            train_metrics_accumulator['total_words'] += batch_metrics['total_words']
             train_metrics_accumulator['batch_count'] += 1
             
             logger.log_training_step(epoch, global_step, total_steps, avg_loss, lr, grad_norm.item())
@@ -346,11 +390,13 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
     
     # Compute epoch-level training metrics
     epoch_train_metrics = {
-        'cer': train_metrics_accumulator['cer'] / max(train_metrics_accumulator['total_sequences'], 1),
+        'cer': train_metrics_accumulator['cer'] / max(train_metrics_accumulator['total_chars'], 1),
+        'wer': train_metrics_accumulator['wer'] / max(train_metrics_accumulator['total_words'], 1),
         'exact_match': train_metrics_accumulator['exact_match'] / max(train_metrics_accumulator['total_sequences'], 1),
         'token_accuracy': train_metrics_accumulator['token_accuracy'] / max(train_metrics_accumulator['total_sequences'], 1),
         'total_sequences': train_metrics_accumulator['total_sequences'],
-        'total_chars': train_metrics_accumulator['total_sequences'],  # Approximation
+        'total_chars': train_metrics_accumulator['total_chars'],
+        'total_words': train_metrics_accumulator['total_words'],
     }
     
     return total_loss / num_batches, epoch_train_metrics
@@ -459,6 +505,23 @@ def main():
     model = create_model(config)
     model.to(device)
     
+    # Initialize training state
+    start_epoch = 0
+    best_val_acc = 0.0
+    
+    # Load checkpoint if resuming
+    if args.resume_checkpoint:
+        if os.path.exists(args.resume_checkpoint):
+            print(f"Loading checkpoint from {args.resume_checkpoint}")
+            checkpoint = torch.load(args.resume_checkpoint, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            start_epoch = checkpoint.get('epoch', 0)
+            best_val_acc = checkpoint.get('val_acc', 0.0)
+            print(f"Resumed from epoch {start_epoch} with best validation accuracy: {best_val_acc:.4f}")
+        else:
+            print(f"Checkpoint file {args.resume_checkpoint} not found. Starting from scratch.")
+            args.resume_checkpoint = None
+    
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -471,17 +534,25 @@ def main():
     )
     
     total_steps = len(train_loader) * args.epochs
-    scheduler = get_linear_schedule_with_warmup(
+    scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=args.warmup_steps,
         num_training_steps=total_steps
     )
     
+    # Load optimizer and scheduler state if resuming
+    if args.resume_checkpoint and os.path.exists(args.resume_checkpoint):
+        checkpoint = torch.load(args.resume_checkpoint, map_location=device)
+        if 'optimizer_state_dict' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    
     
     # Copy training scripts to checkpoint folder
-    shutil.copy2("train_timeseries.py", model_save_dir)
-    if os.path.exists("train_timeseries.sh"):
-        shutil.copy2("train_timeseries.sh", model_save_dir)
+    shutil.copy2("train_stt.py", model_save_dir)
+    if os.path.exists("train_stt.sh"):
+        shutil.copy2("train_stt.sh", model_save_dir)
     
     # Log training start
     logger.log_training_start(
@@ -502,21 +573,20 @@ def main():
             "model/batch_size": args.batch_size
         })
     
-    # Training loop
-    best_val_acc = 0.0
+    # Training loop starts from start_epoch
     
     print(f"[DEBUG] Sample printing enabled: {args.print_samples}")
     if args.print_samples:
         print(f"[DEBUG] Will print training samples every {args.log_interval} batches")
         print(f"[DEBUG] Will print validation samples every 2 epochs")
     
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         logger.log_epoch_start(epoch + 1, args.epochs)
         
         # Train
         train_loss, train_metrics = train_epoch(
             model, train_loader, optimizer, scheduler, device, epoch + 1, 
-            args.log_interval, logger, args.max_grad_norm, args.use_wandb, idx_to_char, args.print_samples
+            args.log_interval, logger, args.max_grad_norm, args.use_wandb, idx_to_char, args.print_samples, args.gradient_accumulation_steps
         )
         
         # Validate (print samples every 2 epochs if enabled)

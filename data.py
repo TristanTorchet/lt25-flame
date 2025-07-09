@@ -92,14 +92,14 @@ def create_cifar_gs_classification_dataset(bsz=128, root="./data"):
 
     return trainloader, valloader, testloader, N_CLASSES, SEQ_LENGTH, IN_DIM
 
-def create_librosa_raw_classification_dataset(bsz=128, root="./data", max_samples=1000, num_mfcc=256):
+def create_librosa_raw_classification_dataset(bsz=128, root="./data", max_samples=1000, num_mfcc=80, cache_dir=".cache"):
     
     print("[*] Generating LibriSpeech ASR Dataset")
 
     # Import here to avoid circular imports
     from preprocess_ctc import create_asr_dataloaders
     
-    train_loader, val_loader, char_to_idx, idx_to_char = create_asr_dataloaders(
+    train_loader, val_loader, test_loader, char_to_idx, idx_to_char = create_asr_dataloaders(
                         batch_size=bsz,
                         max_samples=max_samples, 
                         use_ctc=True,
@@ -107,4 +107,4 @@ def create_librosa_raw_classification_dataset(bsz=128, root="./data", max_sample
 
     # Return: train_loader, val_loader, test_loader, n_classes, seq_len, input_dim, char_to_idx, idx_to_char
     # For ASR: seq_len is variable, so we use -1, input_dim is num_mfcc
-    return train_loader, val_loader, val_loader, len(char_to_idx), -1, num_mfcc, char_to_idx, idx_to_char
+    return train_loader, val_loader, test_loader, len(char_to_idx), -1, num_mfcc, char_to_idx, idx_to_char
