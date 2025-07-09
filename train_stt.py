@@ -9,7 +9,7 @@ import os
 import time
 from datetime import datetime
 import torch
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_cosine_schedule_with_warmup
 import wandb
 import shutil
 import json
@@ -23,7 +23,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train HGRN on ASR")
     
     # Dataset args
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--max_samples", type=int, default=1000, help="Maximum samples for ASR dataset")
     parser.add_argument("--num_mfcc", type=int, default=256, help="Number of MFCC features")
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
@@ -37,7 +37,7 @@ def parse_args():
     
     # Training args
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     
     # Logging args
-    parser.add_argument("--log_interval", type=int, default=100)
+    parser.add_argument("--log_interval", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="./checkpoints")
     parser.add_argument("--model_name", type=str, default="hgrn_asr", help="Name of the model for saving")
     parser.add_argument("--disable_colors", action="store_true", help="Disable colored output")
@@ -232,7 +232,7 @@ def evaluate_model(model, dataloader, device, idx_to_char=None, print_samples=Fa
             total_loss += loss.item()
             
             # Decode sequences for evaluation
-            decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=False)
+            decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=True)
             
             # Extract target sequences from batched format
             batch_targets = []
@@ -534,7 +534,7 @@ def main():
     )
     
     total_steps = len(train_loader) * args.epochs
-    scheduler = get_linear_schedule_with_warmup(
+    scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=args.warmup_steps,
         num_training_steps=total_steps

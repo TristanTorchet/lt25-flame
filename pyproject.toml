@@ -29,6 +29,10 @@ dependencies = [
     'tensorboard',
     "torchvision>=0.22.1",
     "matplotlib>=3.10.3",
+    "dash>=3.1.1",
+    "plotly>=6.2.0",
+    "soundfile>=0.13.1",
+    "librosa>=0.11.0",
 ]
 
 [project.optional-dependencies]

@@ -16,8 +16,8 @@ os.environ["FSSPEC_HTTP_TIMEOUT"] = "3600"
 
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
-                 max_audio_length=16000*20,  # 20 seconds max
-                 min_audio_length=16000*8,   # 8 seconds min
+                 max_audio_length=16000*30,  # 30 seconds max
+                 min_audio_length=16000*1,   # 1 second min
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,
@@ -190,10 +190,7 @@ class LibriSpeechASRDataset(Dataset):
         # if self.dataset.split._name.startswith('train'):
         #     waveform = self.time_shift(waveform)
         #     waveform = self.add_background_noise(waveform)
-        
-        # Normalize audio
-        waveform = waveform / (waveform.abs().max() + 1e-8)
-        
+
         return waveform
 
     def __len__(self):
