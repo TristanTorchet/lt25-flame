@@ -49,3 +49,5 @@ __pycache__
 preprocess.py
 preprocess_ctc_old.py
 preprocess_ctc_v2.py
+
+checkpoints/
