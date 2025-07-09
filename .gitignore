@@ -47,7 +47,7 @@ __pycache__
 # macOS
 .DS_Store
 preprocess.py
-preprocess_ctc_old.py
+preprocess_ctc_*
 preprocess_ctc_v2.py
 
 checkpoints/

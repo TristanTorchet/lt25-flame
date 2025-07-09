@@ -8,7 +8,6 @@ from torchaudio.transforms import MFCC, MelSpectrogram, AmplitudeToDB
 from datasets import load_dataset
 import re
 from collections import defaultdict
-import aiohttp
 
 SAMPLE_RATE = 16000
 
@@ -26,13 +25,12 @@ class LibriSpeechASRDataset(Dataset):
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
-                 streaming=False
-                 cache_dir=None):
+                 streaming=False):
         """
         LibriSpeech dataset for ASR with audio preprocessing
         
         Args:
-            split: LibriSpeech split ("train.100", "train.360", "train.500", "validation", "test")
+            split: LibriSpeech split ("train.100", "train.360", "train.500", "validation.clean", "test.clean")
             max_audio_length: Maximum audio length in samples
             min_audio_length: Minimum audio length in samples
             background_frequency: Probability of adding background noise
@@ -54,19 +52,9 @@ class LibriSpeechASRDataset(Dataset):
         self.tokenizer = tokenizer
         self.streaming = streaming
         
-        self.cache_dir = cache_dir
-
         # Load LibriSpeech dataset
         print(f"Loading LibriSpeech {split} split...")
-        if cache_dir is None:
-            cache_dir = "/export/work/apierro/datasets/cache"
-
-        self.dataset = load_dataset("openslr/librispeech_asr", 
-                                    split=split, 
-                                    storage_options={'client_kwargs': {'timeout': aiohttp.ClientTimeout(total=3600)}},
-                                    trust_remote_code=True, 
-                                    streaming=streaming, 
-                                    cache_dir=cache_dir)
+        self.dataset = load_dataset("openslr/librispeech_asr", split=split, trust_remote_code=True, streaming=streaming)
         
         # Initialize transforms
         self.mfcc_transform = MFCC(
@@ -344,7 +332,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
     
     # Create datasets
     train_dataset = LibriSpeechASRDataset(
-        split="train.100",
+        split="test.clean",
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
