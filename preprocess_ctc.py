@@ -25,7 +25,8 @@ class LibriSpeechASRDataset(Dataset):
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
-                 streaming=False):
+                 streaming=False,
+                 cache_dir=None):
         """
         LibriSpeech dataset for ASR with audio preprocessing
         
@@ -54,7 +55,14 @@ class LibriSpeechASRDataset(Dataset):
         
         # Load LibriSpeech dataset
         print(f"Loading LibriSpeech {split} split...")
-        self.dataset = load_dataset("openslr/librispeech_asr", split=split, trust_remote_code=True, streaming=streaming)
+        self.dataset = load_dataset(
+            "openslr/librispeech_asr",
+            "clean",
+            split=split,
+            trust_remote_code=True,
+            streaming=streaming,
+            cache_dir=cache_dir
+        )
         
         # Initialize transforms
         self.mfcc_transform = MFCC(
@@ -327,8 +335,17 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False):
-    """Create train and validation dataloaders for ASR"""
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, cache_dir=None):
+    """Create train and validation dataloaders for ASR
+    
+    Args:
+        batch_size: Batch size for dataloaders
+        max_samples: Maximum number of samples to load
+        use_ctc: Whether to use CTC-specific collate function
+        num_mfcc: Number of MFCC features
+        streaming: Whether to use streaming mode
+        cache_dir: Directory to cache downloaded datasets
+    """
     
     # Create datasets
     train_dataset = LibriSpeechASRDataset(
@@ -336,6 +353,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
+        cache_dir=cache_dir
     )
     
     val_dataset = LibriSpeechASRDataset(
@@ -343,6 +361,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         max_samples=max_samples//5,
         num_mfcc=num_mfcc,
         streaming=streaming,
+        cache_dir=cache_dir
     )
     
     # Choose collate function based on model type
