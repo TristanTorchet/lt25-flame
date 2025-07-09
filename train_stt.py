@@ -60,12 +60,93 @@ def create_model(config):
     return HGRNASRForCTC(config)
 
 
+def levenshtein_distance(seq1: list, seq2: list) -> int:
+    """Calculate Levenshtein distance between two sequences."""
+    if len(seq1) < len(seq2):
+        return levenshtein_distance(seq2, seq1)
+    
+    if len(seq2) == 0:
+        return len(seq1)
+    
+    previous_row = list(range(len(seq2) + 1))
+    for i, c1 in enumerate(seq1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(seq2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]
+
+
+def calculate_sequence_metrics(predictions: list, targets: list) -> dict:
+    """Calculate comprehensive sequence-level metrics."""
+    metrics = {
+        'cer': 0.0,
+        'wer': 0.0,
+        'exact_match': 0.0,
+        'token_accuracy': 0.0,
+        'total_chars': 0,
+        'total_words': 0,
+        'total_sequences': 0
+    }
+    
+    if len(predictions) == 0:
+        return metrics
+    
+    total_char_errors = 0
+    total_word_errors = 0
+    total_chars = 0
+    total_words = 0
+    exact_matches = 0
+    token_correct = 0
+    token_total = 0
+    
+    for pred, target in zip(predictions, targets):
+        # Convert to lists if they're tensors
+        if hasattr(pred, 'tolist'):
+            pred = pred.tolist()
+        if hasattr(target, 'tolist'):
+            target = target.tolist()
+        
+        # Character Error Rate (CER)
+        char_errors = levenshtein_distance(pred, target)
+        total_char_errors += char_errors
+        total_chars += len(target)
+        
+        # Word Error Rate (WER) - treat tokens as words for now
+        word_errors = levenshtein_distance(pred, target)
+        total_word_errors += word_errors
+        total_words += len(target)
+        
+        # Exact sequence match
+        if pred == target:
+            exact_matches += 1
+        
+        # Token-level accuracy
+        min_len = min(len(pred), len(target))
+        token_correct += sum(1 for i in range(min_len) if pred[i] == target[i])
+        token_total += max(len(pred), len(target))
+    
+    metrics['cer'] = total_char_errors / max(total_chars, 1)
+    metrics['wer'] = total_word_errors / max(total_words, 1)
+    metrics['exact_match'] = exact_matches / len(predictions)
+    metrics['token_accuracy'] = token_correct / max(token_total, 1)
+    metrics['total_chars'] = total_chars
+    metrics['total_words'] = total_words
+    metrics['total_sequences'] = len(predictions)
+    
+    return metrics
+
+
 def evaluate_model(model, dataloader, device):
-    """Evaluate ASR model on given dataloader."""
+    """Evaluate ASR model with comprehensive sequence-level metrics."""
     model.eval()
     total_loss = 0
-    correct = 0
-    total = 0
+    all_predictions = []
+    all_targets = []
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
@@ -85,34 +166,30 @@ def evaluate_model(model, dataloader, device):
                 target_lengths=target_lengths
             )
             loss = outputs.loss
-            
             total_loss += loss.item()
             
-            # For CTC evaluation, we'll use a simplified accuracy metric
-            # In practice, you'd want to use proper sequence accuracy or WER
-            if hasattr(outputs, 'log_probs') and outputs.log_probs is not None:
-                # Decode sequences and compare
-                decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=False)
-                
-                # Simple token-level accuracy (not ideal for CTC but as a proxy)
-                for i, decoded in enumerate(decoded_seqs):
-                    target_len = target_lengths[i].item()
-                    start_idx = sum(target_lengths[:i])
-                    target_tokens = labels[start_idx:start_idx + target_len].tolist()
-                    
-                    # Count matching tokens (simplified)
-                    min_len = min(len(decoded), len(target_tokens))
-                    matches = sum(1 for j in range(min_len) if decoded[j] == target_tokens[j])
-                    correct += matches
-                    total += max(len(decoded), len(target_tokens))
-            else:
-                # Fallback simple accuracy
-                total += labels.size(0)
+            # Decode sequences for evaluation
+            decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=False)
+            
+            # Extract target sequences from batched format
+            batch_targets = []
+            for i in range(len(decoded_seqs)):
+                target_len = target_lengths[i].item()
+                start_idx = sum(target_lengths[:i])
+                target_tokens = labels[start_idx:start_idx + target_len].tolist()
+                batch_targets.append(target_tokens)
+            
+            all_predictions.extend(decoded_seqs)
+            all_targets.extend(batch_targets)
     
+    # Calculate comprehensive metrics
+    metrics = calculate_sequence_metrics(all_predictions, all_targets)
     avg_loss = total_loss / len(dataloader)
-    accuracy = correct / total
     
-    return avg_loss, accuracy
+    # Return main accuracy metric for backward compatibility
+    accuracy = 1.0 - metrics['cer']  # Use CER as primary metric (lower is better)
+    
+    return avg_loss, accuracy, metrics
 
 
 def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_interval, logger, max_grad_norm=1.0, use_wandb=False):
@@ -125,6 +202,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
         # Handle ASR batch dictionary format
         inputs = batch['features'].to(dtype=torch.float32, device=device)
         labels = batch['targets'].to(dtype=torch.long, device=device)
+
         input_lengths = batch['feature_lengths'].to(dtype=torch.long, device=device)
         target_lengths = batch['target_lengths'].to(dtype=torch.long, device=device)
         
@@ -189,7 +267,7 @@ def main():
             name=f"{args.model_name}_{timestamp}",
             config={
                 "model_name": args.model_name,
-                "dataset": args.dataset,
+                "dataset": "ASR",
                 "batch_size": args.batch_size,
                 "hidden_size": args.hidden_size,
                 "num_layers": args.num_layers,
@@ -328,7 +406,7 @@ def main():
         )
         
         # Validate
-        val_loss, val_acc = evaluate_model(model, val_loader, device)
+        val_loss, val_acc, val_metrics = evaluate_model(model, val_loader, device)
         
         # Check if this is the best model
         is_best = val_acc > best_val_acc
@@ -345,27 +423,34 @@ def main():
                 'timestamp': timestamp,
             }, os.path.join(model_save_dir, f'best_model_asr.pt'))
         
-        # Log validation results
+        # Log validation results with detailed metrics
         logger.log_validation(epoch + 1, val_loss, val_acc, is_best)
+        logger.log_sequence_metrics(epoch + 1, val_metrics, "validation")
         
         # Log validation results to wandb if enabled
         if args.use_wandb:
             wandb.log({
                 "val/loss": val_loss,
                 "val/accuracy": val_acc,
+                "val/cer": val_metrics['cer'],
+                "val/wer": val_metrics['wer'],
+                "val/exact_match": val_metrics['exact_match'],
+                "val/token_accuracy": val_metrics['token_accuracy'],
+                "val/total_sequences": val_metrics['total_sequences'],
                 "val/epoch": epoch + 1,
                 "val/is_best": is_best,
                 "val/best_accuracy": best_val_acc
             })
     
     # Final evaluation on test set
-    test_loss, test_acc = evaluate_model(model, test_loader, device)
+    test_loss, test_acc, test_metrics = evaluate_model(model, test_loader, device)
     
     # Calculate total training time
     total_time = time.time() - logger.start_time
     
     # Log final results
     logger.log_test_results(test_loss, test_acc)
+    logger.log_sequence_metrics(0, test_metrics, "final test")
     logger.log_training_complete(total_time, best_val_acc)
     
     # Save final model info
@@ -375,6 +460,7 @@ def main():
         "dataset": "ASR",
         "final_test_loss": test_loss,
         "final_test_accuracy": test_acc,
+        "final_test_metrics": test_metrics,
         "best_val_accuracy": best_val_acc,
         "total_training_time": total_time,
         "total_params": total_params,
@@ -391,6 +477,11 @@ def main():
         wandb.log({
             "test/loss": test_loss,
             "test/accuracy": test_acc,
+            "test/cer": test_metrics['cer'],
+            "test/wer": test_metrics['wer'],
+            "test/exact_match": test_metrics['exact_match'],
+            "test/token_accuracy": test_metrics['token_accuracy'],
+            "test/total_sequences": test_metrics['total_sequences'],
             "training/total_time": total_time,
             "training/best_val_accuracy": best_val_acc
         })
@@ -400,7 +491,9 @@ def main():
     
     print(f"\nTraining completed! Model saved to: {model_save_dir}")
     print(f"Best validation accuracy: {best_val_acc:.4f}")
-    print(f"Final test accuracy: {test_acc:.4f}")
+    print(f"Final test CER: {test_metrics['cer']:.4f} ({test_metrics['cer']*100:.2f}%)")
+    print(f"Final test WER: {test_metrics['wer']:.4f} ({test_metrics['wer']*100:.2f}%)")
+    print(f"Final test exact match: {test_metrics['exact_match']:.4f} ({test_metrics['exact_match']*100:.2f}%)")
 
 
 if __name__ == "__main__":
