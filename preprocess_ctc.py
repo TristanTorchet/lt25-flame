@@ -5,7 +5,7 @@ import torchaudio
 import numpy as np
 import librosa
 from torch.utils.data import Dataset, DataLoader
-from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
+from torchaudio.transforms import MelSpectrogram, AmplitudeToDB, MFCC
 from datasets import load_dataset
 import re
 from collections import defaultdict
@@ -80,7 +80,7 @@ class LibriSpeechASRDataset(Dataset):
             n_mfcc=num_mfcc,
             melkwargs={
                 'n_fft': self.n_fft,
-                'n_mels': n_mels,
+                'n_mels': self.n_mels,
                 'hop_length': self.hop_length,
                 'win_length': self.win_length,
                 'f_min': 0.0,
@@ -122,8 +122,8 @@ class LibriSpeechASRDataset(Dataset):
             self.char_to_idx, self.idx_to_char = self.create_character_tokenizer()
         
         for idx, sample in enumerate(self.dataset):
-            if self.max_samples and idx >= self.max_samples:
-                break
+            if self.max_samples != -1:
+                if self.max_samples and idx >= self.max_samples: break
                 
             audio_array = sample['audio']['array']
             text = sample['text']
@@ -302,7 +302,7 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False):
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, **dataloader_kwargs):
     """Create train and validation dataloaders for ASR
     
     Args:
@@ -342,14 +342,16 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         train_dataset, 
         batch_size=batch_size, 
         shuffle=True,
-        collate_fn=collate_function
+        collate_fn=collate_function,
+        **dataloader_kwargs
     )
     
     val_loader = DataLoader(
         val_dataset, 
         batch_size=batch_size, 
         shuffle=False,
-        collate_fn=collate_function
+        collate_fn=collate_function,
+        **dataloader_kwargs
     )
     
     return train_loader, val_loader, test_dataset, train_dataset.char_to_idx, train_dataset.idx_to_char

@@ -119,7 +119,8 @@ def create_librosa_raw_classification_dataset(
     root="./data",
     max_samples=1000,
     num_mfcc=80,
-    cache_dir="/export/work/apierro/datasets/cache",
+    cache_dir="cache/",
+    **dataloader_kwargs,
 ):
 
     print("[*] Generating LibriSpeech ASR Dataset")
@@ -131,7 +132,8 @@ def create_librosa_raw_classification_dataset(
         batch_size=bsz,
         max_samples=max_samples, 
         use_ctc=True,
-        num_mfcc=num_mfcc
+        num_mfcc=num_mfcc,
+        **dataloader_kwargs,
     )
 
     # Return: train_loader, val_loader, test_loader, n_classes, seq_len, input_dim, char_to_idx, idx_to_char
