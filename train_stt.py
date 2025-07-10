@@ -23,7 +23,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train HGRN on ASR")
     
     # Dataset args
-    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--max_samples", type=int, default=1000, help="Maximum samples for ASR dataset")
     parser.add_argument("--num_mfcc", type=int, default=80, help="Number of MFCC features")
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
@@ -37,7 +37,7 @@ def parse_args():
     
     # Training args
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
@@ -349,57 +349,24 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
         else:
             # For logging purposes, still calculate grad norm
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
-        
-        if batch_idx % log_interval == 0 and batch_idx >= 0:
-            avg_loss = total_loss / (batch_idx + 1)
-            lr = scheduler.get_last_lr()[0]
-            global_step = (epoch - 1) * num_batches + batch_idx
-            total_steps = epoch * num_batches  # Approximate for current epoch
-            
-            # Compute training metrics for this batch (print samples based on flag and frequency)
-            should_print = print_samples and batch_idx % log_interval == 0  # Print every log interval if enabled
-            if should_print:
-                print(f"\n[DEBUG] Printing training samples for batch {batch_idx}, epoch {epoch}")
-            batch_metrics = compute_training_metrics(model, batch, device, idx_to_char, should_print)
-            
-            # Accumulate metrics
-            train_metrics_accumulator['cer'] += batch_metrics['cer'] * batch_metrics['total_chars']
-            train_metrics_accumulator['wer'] += batch_metrics['wer'] * batch_metrics['total_words']
-            train_metrics_accumulator['exact_match'] += batch_metrics['exact_match'] * batch_metrics['total_sequences']
-            train_metrics_accumulator['token_accuracy'] += batch_metrics['token_accuracy'] * batch_metrics['total_sequences']
-            train_metrics_accumulator['total_sequences'] += batch_metrics['total_sequences']
-            train_metrics_accumulator['total_chars'] += batch_metrics['total_chars']
-            train_metrics_accumulator['total_words'] += batch_metrics['total_words']
-            train_metrics_accumulator['batch_count'] += 1
-            
-            logger.log_training_step(epoch, global_step, total_steps, avg_loss, lr, grad_norm.item())
-            
-            # Log to wandb if enabled
-            if use_wandb:
-                wandb.log({
-                    "train/loss": avg_loss,
-                    "train/learning_rate": lr,
-                    "train/grad_norm": grad_norm.item(),
-                    "train/epoch": epoch,
-                    "train/step": global_step,
-                    "train/batch_cer": batch_metrics['cer'],
-                    "train/batch_wer": batch_metrics['wer'],
-                    "train/batch_exact_match": batch_metrics['exact_match'],
-                    "train/batch_token_accuracy": batch_metrics['token_accuracy'],
-                })
     
-    # Compute epoch-level training metrics
-    epoch_train_metrics = {
-        'cer': train_metrics_accumulator['cer'] / max(train_metrics_accumulator['total_chars'], 1),
-        'wer': train_metrics_accumulator['wer'] / max(train_metrics_accumulator['total_words'], 1),
-        'exact_match': train_metrics_accumulator['exact_match'] / max(train_metrics_accumulator['total_sequences'], 1),
-        'token_accuracy': train_metrics_accumulator['token_accuracy'] / max(train_metrics_accumulator['total_sequences'], 1),
-        'total_sequences': train_metrics_accumulator['total_sequences'],
-        'total_chars': train_metrics_accumulator['total_chars'],
-        'total_words': train_metrics_accumulator['total_words'],
-    }
+        avg_loss = total_loss / (batch_idx + 1)
+        lr = scheduler.get_last_lr()[0]
+        global_step = (epoch - 1) * num_batches + batch_idx
+        total_steps = epoch * num_batches  # Approximate for current epoch
+        logger.log_training_step(epoch, global_step, total_steps, avg_loss, lr, grad_norm.item())
+
+        if use_wandb:
+            wandb.log({
+                "train/loss": avg_loss,
+                "train/learning_rate": lr,
+                "train/grad_norm": grad_norm.item(),
+                "train/epoch": epoch,
+                "train/step": global_step,
+            })
+
     
-    return total_loss / num_batches, epoch_train_metrics
+    return total_loss / num_batches
 
 
 def main():
@@ -584,13 +551,13 @@ def main():
         logger.log_epoch_start(epoch + 1, args.epochs)
         
         # Train
-        train_loss, train_metrics = train_epoch(
+        train_loss = train_epoch(
             model, train_loader, optimizer, scheduler, device, epoch + 1, 
             args.log_interval, logger, args.max_grad_norm, args.use_wandb, idx_to_char, args.print_samples, args.gradient_accumulation_steps
         )
         
         # Validate (print samples every 2 epochs if enabled)
-        print_val_samples = args.print_samples and (epoch + 1) % 2 == 0
+        print_val_samples = args.print_samples
         if print_val_samples:
             print(f"\n[DEBUG] Printing validation samples for epoch {epoch + 1}")
         val_loss, val_acc, val_metrics = evaluate_model(model, val_loader, device, idx_to_char, print_val_samples)
@@ -610,9 +577,6 @@ def main():
                 'timestamp': timestamp,
             }, os.path.join(model_save_dir, f'best_model_asr.pt'))
         
-        # Log training metrics
-        logger.log_sequence_metrics(epoch + 1, train_metrics, "training")
-        
         # Log validation results with detailed metrics
         logger.log_validation(epoch + 1, val_loss, val_acc, is_best)
         logger.log_sequence_metrics(epoch + 1, val_metrics, "validation")
@@ -621,11 +585,6 @@ def main():
         if args.use_wandb:
             wandb.log({
                 "train/epoch_loss": train_loss,
-                "train/epoch_cer": train_metrics['cer'],
-                "train/epoch_wer": train_metrics['wer'],
-                "train/epoch_exact_match": train_metrics['exact_match'],
-                "train/epoch_token_accuracy": train_metrics['token_accuracy'],
-                "train/epoch_total_sequences": train_metrics['total_sequences'],
                 "val/loss": val_loss,
                 "val/accuracy": val_acc,
                 "val/cer": val_metrics['cer'],
@@ -657,7 +616,6 @@ def main():
         "final_test_loss": test_loss,
         "final_test_accuracy": test_acc,
         "final_test_metrics": test_metrics,
-        "final_train_metrics": train_metrics,
         "best_val_accuracy": best_val_acc,
         "total_training_time": total_time,
         "total_params": total_params,

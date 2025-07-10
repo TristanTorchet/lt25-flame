@@ -312,7 +312,7 @@ class HGRNASRForCTC(PreTrainedModel):
         self.ctc_loss = nn.CTCLoss(blank=self.blank_id, reduction='mean', zero_infinity=True)
         
         # Beam search decoder
-        self.decoder = BeamSearchDecoder(blank_id=self.blank_id, beam_size=5)
+        self.decoder = BeamSearchDecoder(blank_id=self.blank_id, beam_size=3)
         
         # Initialize weights
         self.post_init()
