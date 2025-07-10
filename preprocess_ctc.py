@@ -66,20 +66,34 @@ class LibriSpeechASRDataset(Dataset):
         )
         
         # Initialize transforms
-        # Store MFCC parameters for librosa
+        # Ensure n_mels >= num_mfcc to avoid ValueError
         self.num_mfcc = num_mfcc
         self.n_fft = 400
-        self.hop_length = 160
-        self.win_length = 400
+        self.hop_length = 10
+        self.win_length = 25
         self.n_mels = max(num_mfcc, 40)
         self.f_min = 0.0
         self.f_max = SAMPLE_RATE // 2
+
+        self.mfcc_transform = MFCC(
+            sample_rate=SAMPLE_RATE,
+            n_mfcc=num_mfcc,
+            melkwargs={
+                'n_fft': self.n_fft,
+                'n_mels': n_mels,
+                'hop_length': self.hop_length,
+                'win_length': self.win_length,
+                'f_min': 0.0,
+                'f_max': SAMPLE_RATE // 2
+            }
+        ) if use_mfcc else None
+        # Store MFCC parameters for librosa
+
 
         # Prepare dataset
         self.prepare_dataset()
         
         print(f"Dataset prepared with {len(self.samples)} samples")
-        print(f"Audio length stats: min={self.min_length:.2f}s, max={self.max_length:.2f}s, avg={self.avg_length:.2f}s")
 
     def create_character_tokenizer(self):
         """Create a simple character-level tokenizer"""
@@ -117,7 +131,7 @@ class LibriSpeechASRDataset(Dataset):
             # Filter by audio length
             audio_length = len(audio_array)
             if audio_length < self.min_audio_length or audio_length > self.max_audio_length:
-                continue
+                return {}
 
             text = text.lower()
             

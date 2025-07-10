@@ -126,11 +126,12 @@ def create_librosa_raw_classification_dataset(
 
     # Import here to avoid circular imports
     from preprocess_ctc import create_asr_dataloaders
-
-    train_loader, val_loader, test_loader, char_to_idx, idx_to_char = (
-        create_asr_dataloaders(
-            batch_size=bsz, max_samples=max_samples, use_ctc=True, num_mfcc=num_mfcc
-        )
+    
+    train_loader, val_loader, test_loader, char_to_idx, idx_to_char = create_asr_dataloaders(
+        batch_size=bsz,
+        max_samples=max_samples, 
+        use_ctc=True,
+        num_mfcc=num_mfcc
     )
 
     # Return: train_loader, val_loader, test_loader, n_classes, seq_len, input_dim, char_to_idx, idx_to_char
