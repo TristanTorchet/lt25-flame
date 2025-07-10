@@ -69,26 +69,11 @@ class LibriSpeechASRDataset(Dataset):
         # Ensure n_mels >= num_mfcc to avoid ValueError
         self.num_mfcc = num_mfcc
         self.n_fft = 400
-        self.hop_length = 10
-        self.win_length = 25
+        self.hop_length = 160
+        self.win_length = 400
         self.n_mels = max(num_mfcc, 40)
         self.f_min = 0.0
         self.f_max = SAMPLE_RATE // 2
-
-        self.mfcc_transform = MFCC(
-            sample_rate=SAMPLE_RATE,
-            n_mfcc=num_mfcc,
-            melkwargs={
-                'n_fft': self.n_fft,
-                'n_mels': self.n_mels,
-                'hop_length': self.hop_length,
-                'win_length': self.win_length,
-                'f_min': 0.0,
-                'f_max': SAMPLE_RATE // 2
-            }
-        ) if use_mfcc else None
-        # Store MFCC parameters for librosa
-
 
         # Prepare dataset
         self.prepare_dataset()
@@ -323,14 +308,14 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
     
     val_dataset = LibriSpeechASRDataset(
         split="validation",
-        max_samples=max_samples//5,
+        max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
     )
     
     test_dataset = LibriSpeechASRDataset(
         split="test",
-        max_samples=max_samples//5,
+        max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
     )
