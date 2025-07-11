@@ -478,7 +478,7 @@ def main():
         cache_dir=args.cache_dir,
         drop_last=True,
         pin_memory=True,
-        num_workers=4,
+        num_workers=0,
     )
 
     # Log dataset info
@@ -513,8 +513,10 @@ def main():
         max_sequence_length=max_seq_len,
         blank_id=0,  # Assuming blank token is at index 0
         hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_layers,
-        num_heads=args.num_heads,
+        n_layer=args.num_layers,
+        n_heads=args.num_heads,
+        n_head=args.num_heads,
+        n_embd=args.hidden_size,
         expand_ratio=args.expand_ratio,
         attn_mode=args.attn_mode,
         use_short_conv=False,

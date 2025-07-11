@@ -21,6 +21,7 @@ class HGRNASRConfig(HGRNConfig,GPT2Config):
         vocab_size: int = 50,  # Number of character classes
         max_sequence_length: int = 4096,
         blank_id: int = -100,  # CTC blank token
+        num_heads: int = 8,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -28,6 +29,7 @@ class HGRNASRConfig(HGRNConfig,GPT2Config):
         self.vocab_size = vocab_size
         self.n_positions = self.max_sequence_length = 4096
         self.blank_id = blank_id
+        self.num_heads = num_heads
 
 
 class HGRNASRBlock(nn.Module):
