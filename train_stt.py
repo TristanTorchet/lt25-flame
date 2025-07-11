@@ -24,7 +24,7 @@ def parse_args():
     
     # Dataset args
     parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--max_samples", type=int, default=1000, help="Maximum samples for ASR dataset")
+    parser.add_argument("--max_samples", type=int, default=None, help="Maximum samples for ASR dataset")
     parser.add_argument("--num_mfcc", type=int, default=80, help="Number of MFCC features")
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
     
@@ -34,9 +34,9 @@ def parse_args():
     parser.add_argument("--num_heads", type=int, default=1)
     parser.add_argument("--expand_ratio", type=int, default=1)
     parser.add_argument("--attn_mode", type=str, default="chunk", choices=["chunk", "fused_recurrent"])
-    
+
     # Training args
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.01)
@@ -88,11 +88,9 @@ def calculate_sequence_metrics(predictions: list, targets: list, idx_to_char: di
     """Calculate comprehensive sequence-level metrics."""
     metrics = {
         'cer': 0.0,
-        'wer': 0.0,
         'exact_match': 0.0,
         'token_accuracy': 0.0,
         'total_chars': 0,
-        'total_words': 0,
         'total_sequences': 0
     }
     
@@ -100,9 +98,7 @@ def calculate_sequence_metrics(predictions: list, targets: list, idx_to_char: di
         return metrics
     
     total_char_errors = 0
-    total_word_errors = 0
     total_chars = 0
-    total_words = 0
     exact_matches = 0
     token_correct = 0
     token_total = 0
@@ -135,21 +131,11 @@ def calculate_sequence_metrics(predictions: list, targets: list, idx_to_char: di
             char_errors = levenshtein_distance(pred_chars, target_chars)
             total_char_errors += char_errors
             total_chars += len(target_chars)
-            
-            # Word Error Rate (WER) - treat tokens as words for now
-            word_errors = levenshtein_distance(pred, target)
-            total_word_errors += word_errors
-            total_words += len(target)
         else:
             # Fallback to token-level comparison if no character mapping
             char_errors = levenshtein_distance(pred, target)
             total_char_errors += char_errors
             total_chars += len(target)
-            
-            # Word Error Rate (WER) - treat tokens as words for now
-            word_errors = levenshtein_distance(pred, target)
-            total_word_errors += word_errors
-            total_words += len(target)
         
         # Exact sequence match
         if pred == target:
@@ -161,11 +147,9 @@ def calculate_sequence_metrics(predictions: list, targets: list, idx_to_char: di
         token_total += max(len(pred), len(target))
     
     metrics['cer'] = total_char_errors / max(total_chars, 1)
-    metrics['wer'] = total_word_errors / max(total_words, 1)
     metrics['exact_match'] = exact_matches / len(predictions)
     metrics['token_accuracy'] = token_correct / max(token_total, 1)
     metrics['total_chars'] = total_chars
-    metrics['total_words'] = total_words
     metrics['total_sequences'] = len(predictions)
     
     return metrics
@@ -305,12 +289,10 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, log_inte
     # Accumulate training metrics
     train_metrics_accumulator = {
         'cer': 0.0,
-        'wer': 0.0,
         'exact_match': 0.0,
         'token_accuracy': 0.0,
         'total_sequences': 0,
         'total_chars': 0,
-        'total_words': 0,
         'batch_count': 0
     }
     
@@ -556,6 +538,21 @@ def main():
             args.log_interval, logger, args.max_grad_norm, args.use_wandb, idx_to_char, args.print_samples, args.gradient_accumulation_steps
         )
         
+        # Compute training batch metrics for one batch
+        train_batch_iter = iter(train_loader)
+        train_batch = next(train_batch_iter)
+        train_batch_metrics = compute_training_metrics(model, train_batch, device, idx_to_char, print_samples=True)
+        
+        # Log training batch metrics to wandb
+        if args.use_wandb:
+            wandb.log({
+                "train_batch/cer": train_batch_metrics['cer'],
+                "train_batch/exact_match": train_batch_metrics['exact_match'],
+                "train_batch/token_accuracy": train_batch_metrics['token_accuracy'],
+                "train_batch/total_sequences": train_batch_metrics['total_sequences'],
+                "train_batch/epoch": epoch + 1,
+            })
+        
         # Validate (print samples every 2 epochs if enabled)
         print_val_samples = args.print_samples
         if print_val_samples:
@@ -588,7 +585,6 @@ def main():
                 "val/loss": val_loss,
                 "val/accuracy": val_acc,
                 "val/cer": val_metrics['cer'],
-                "val/wer": val_metrics['wer'],
                 "val/exact_match": val_metrics['exact_match'],
                 "val/token_accuracy": val_metrics['token_accuracy'],
                 "val/total_sequences": val_metrics['total_sequences'],
@@ -633,7 +629,6 @@ def main():
             "test/loss": test_loss,
             "test/accuracy": test_acc,
             "test/cer": test_metrics['cer'],
-            "test/wer": test_metrics['wer'],
             "test/exact_match": test_metrics['exact_match'],
             "test/token_accuracy": test_metrics['token_accuracy'],
             "test/total_sequences": test_metrics['total_sequences'],
@@ -647,7 +642,6 @@ def main():
     print(f"\nTraining completed! Model saved to: {model_save_dir}")
     print(f"Best validation accuracy: {best_val_acc:.4f}")
     print(f"Final test CER: {test_metrics['cer']:.4f} ({test_metrics['cer']*100:.2f}%)")
-    print(f"Final test WER: {test_metrics['wer']:.4f} ({test_metrics['wer']*100:.2f}%)")
     print(f"Final test exact match: {test_metrics['exact_match']:.4f} ({test_metrics['exact_match']*100:.2f}%)")
 
 

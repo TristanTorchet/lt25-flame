@@ -192,7 +192,6 @@ class TimeSeriesLogger:
         """Log detailed sequence-level metrics."""
         print(f"\n{self.color.cyan}=== {prefix.title()} Sequence Metrics (Epoch {epoch}) ==={self.color.reset}")
         print(f"{self.color.green}CER: {metrics['cer']:7.4f} ({metrics['cer']*100:6.2f}%)")
-        print(f"{self.color.green}WER: {metrics['wer']:7.4f} ({metrics['wer']*100:6.2f}%)")
         print(f"{self.color.green}Exact Match: {metrics['exact_match']:7.4f} ({metrics['exact_match']*100:6.2f}%)")
         print(f"{self.color.green}Token Accuracy: {metrics['token_accuracy']:7.4f} ({metrics['token_accuracy']*100:6.2f}%)")
         print(f"{self.color.blue}Total Sequences: {metrics['total_sequences']:,}{self.color.reset}")
