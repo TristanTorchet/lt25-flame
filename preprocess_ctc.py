@@ -20,7 +20,7 @@ os.environ['HF_DATASETS_CACHE'] = os.path.expanduser('~/.cache/huggingface/datas
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
                  max_audio_length=16000*30,  # 30 seconds max
-                 min_audio_length=16000*.1,   # 1 second min
+                 min_audio_length=16000*1,   # 1 second min
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,

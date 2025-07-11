@@ -13,11 +13,10 @@ from transformers import get_cosine_schedule_with_warmup
 import wandb
 import shutil
 import json
-from torch.nn.parallel import DataParallel as DP
 import torch.distributed as dist
 
 from data import create_librosa_raw_classification_dataset
-from flame.models.hgrn_asr_ez import HGRNASRConfig, HGRNASRForCTC
+from flame.models.gpt2_asr import HGRNASRConfig, HGRNASRForCTC #names are legacy
 from flame.logging_timeseries import TimeSeriesLogger
 import torch.multiprocessing as mp
 
@@ -26,22 +25,22 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train HGRN on ASR")
     
     # Dataset args
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--max_samples", type=int, default=1024, help="Maximum samples for ASR dataset: by default, use all")
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--max_samples", type=int, default=-1, help="Maximum samples for ASR dataset: by default, use all")
     parser.add_argument("--num_mfcc", type=int, default=80, help="Number of MFCC features")
     parser.add_argument("--cache_dir", type=str, default="/export/work/apierro/datasets/cache", help="Cache directory for datasets")
     
     # Model args
-    parser.add_argument("--hidden_size", type=int, default=32)
-    parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--num_heads", type=int, default=1)
+    parser.add_argument("--hidden_size", type=int, default=128)
+    parser.add_argument("--num_layers", type=int, default=4)
+    parser.add_argument("--num_heads", type=int, default=2)
     parser.add_argument("--expand_ratio", type=int, default=1)
     parser.add_argument("--attn_mode", type=str, default="chunk", choices=["chunk", "fused_recurrent"])
     
     # Training args
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--warmup_steps", type=int, default=100)
+    parser.add_argument("--lr", type=float, default=3e-3)
+    parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     
@@ -69,6 +68,7 @@ def main():
     def create_model(config):
         """Create HGRN ASR model."""
         return torch.nn.DataParallel(HGRNASRForCTC(config), output_device=0).cuda()
+        #return HGRNASRForCTC(config).cuda()
 
     def levenshtein_distance(seq1: list, seq2: list) -> int:
         """Calculate Levenshtein distance between two sequences."""
@@ -215,6 +215,9 @@ def main():
         total_loss = 0
         all_predictions = []
         all_targets = []
+
+
+        ctcloss = torch.nn.CTCLoss(blank=0, reduction='mean', zero_infinity=True)
         
         with torch.no_grad():
             for batch_idx, batch in enumerate(dataloader):
@@ -228,17 +231,25 @@ def main():
                 inputs = inputs.transpose(1, 2)
 
                 padded_labels = create_padded_labels_scatter(labels, batch_size =inputs.size(0), target_lengths=target_lengths)
+
+                log_probs = model(
+                    input_ids     =        inputs, 
+                    labels        = padded_labels,
+                    input_lengths = input_lengths,
+                    target_lengths=target_lengths,
+                )
+                    
                 
-                loss = model(
-                    input_ids     =(inputs), 
-                    labels        =(padded_labels),
-                    input_lengths =(input_lengths),
-                    target_lengths=(target_lengths)
+                loss = ctcloss(
+                    log_probs.transpose(0,1),
+                    padded_labels,
+                    input_lengths,
+                    target_lengths
                 )
                 total_loss += loss.item()
                 
                 # Decode sequences for evaluation
-                decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=True)
+                decoded_seqs = model.module.decode(log_probs, input_lengths, use_beam_search=True)
                 
                 # Extract target sequences from batched format
                 batch_targets = []
@@ -275,12 +286,24 @@ def main():
             labels = batch['targets'].to(dtype=torch.long)
             input_lengths = batch['feature_lengths'].to(dtype=torch.long)
             target_lengths = batch['target_lengths'].to(dtype=torch.long)
-            
+
             # Transpose features to match model input format [batch, seq_len, feature_dim]
             inputs = inputs.transpose(1, 2)
+
+            padded_labels = create_padded_labels_scatter(labels, batch_size =inputs.size(0), target_lengths=target_lengths)
+
+            log_probs = model(
+                input_ids     =        inputs, 
+                labels        = padded_labels,
+                input_lengths = input_lengths,
+                target_lengths=target_lengths,
+            )
+                    
+                
+            
             
             # Decode sequences for evaluation
-            decoded_seqs = model.decode(inputs, input_lengths, use_beam_search=False)
+            decoded_seqs = model.module.decode(log_probs, input_lengths, use_beam_search=False)
             
             # Extract target sequences from batched format
             batch_targets = []
@@ -346,8 +369,6 @@ def main():
         
         for batch_idx, batch in enumerate(dataloader):
             # Handle ASR batch dictionary format
-            print(batch_idx)
-
             inputs = batch['features'].to(dtype=torch.float32)
             labels = batch['targets'].to(dtype=torch.int)
 
@@ -362,10 +383,10 @@ def main():
 
 
             log_probs = model(
-                input_ids     =inputs, 
-                labels        =padded_labels,
-                input_lengths =input_lengths,
-                target_lengths=target_lengths
+                input_ids     =        inputs, 
+                labels        = padded_labels,
+                input_lengths = input_lengths,
+                target_lengths=target_lengths,
             )
                 
             
@@ -557,9 +578,9 @@ def main():
 
 
     # Copy training scripts to checkpoint folder
-    shutil.copy2("train_stt.py", model_save_dir)
-    if os.path.exists("train_stt.sh"):
-        shutil.copy2("train_stt.sh", model_save_dir)
+    shutil.copy2("train_stt_dataparallel.py", model_save_dir)
+    if os.path.exists("train_stt_dataparallel.sh"):
+        shutil.copy2("train_stt_dataparallel.sh", model_save_dir)
 
     # Log training start
     logger.log_training_start(
