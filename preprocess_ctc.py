@@ -20,7 +20,7 @@ os.environ['HF_DATASETS_CACHE'] = os.path.expanduser('~/.cache/huggingface/datas
 class LibriSpeechASRDataset(Dataset):
     def __init__(self, split="train.100", 
                  max_audio_length=16000*30,  # 30 seconds max
-                 min_audio_length=16000*1,   # 1 second min
+                 min_audio_length=16000*.1,   # 1 second min
                  background_frequency=0.2,   # Lower for ASR
                  background_volume=0.05,     # Lower for ASR
                  time_shift_ms=100.0,
@@ -356,6 +356,54 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
     
     return train_loader, val_loader, test_dataset, train_dataset.char_to_idx, train_dataset.idx_to_char
 
+# Example usage and testing
+def create_huggingface_datasets(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, **dataloader_kwargs):
+    """Create train and validation dataloaders for ASR
+    
+    Args:
+        batch_size: Batch size for dataloaders
+        max_samples: Maximum number of samples to load
+        use_ctc: Whether to use CTC-specific collate function
+        num_mfcc: Number of MFCC features
+        streaming: Whether to use streaming mode
+    """
+    
+    # Create datasets
+    train_dataset = LibriSpeechASRDataset(
+        split="train.100",
+        max_samples=max_samples,
+        num_mfcc=num_mfcc,
+        streaming=streaming,
+    )
+    
+    val_dataset = LibriSpeechASRDataset(
+        split="validation",
+        max_samples=max_samples//5,
+        num_mfcc=num_mfcc,
+        streaming=streaming,
+    )
+    
+    test_dataset = LibriSpeechASRDataset(
+        split="test",
+        max_samples=max_samples//5,
+        num_mfcc=num_mfcc,
+        streaming=streaming,
+    )
+
+    def gen(torch_dataset):
+        def _g():
+            for idx in len(torch_dataset):
+                yield torch_dataset[idx]  # this has to be a dictionary
+    
+        return _g
+
+    from datasets import Dataset as hfDataset
+    train_dataset_hf = hfDataset.from_generator(gen(train_dataset))
+    val_dataset_hf = hfDataset.from_generator(gen(val_dataset))
+    test_dataset_hf = hfDataset.from_generator(gen(test_dataset))
+
+    return train_dataset_hf, val_dataset_hf, test_dataset_hf
+
 
 def create_ctc_loss_function(char_to_idx):
     """Create CTC loss function with blank token"""
@@ -364,45 +412,3 @@ def create_ctc_loss_function(char_to_idx):
     return torch.nn.CTCLoss(blank=blank_idx, reduction='mean', zero_infinity=True)
 
 
-# Test the dataset with CTC
-if __name__ == "__main__":
-    # Test with CTC collate function
-    train_loader, val_loader, char_to_idx, idx_to_char = create_asr_dataloaders(
-        max_samples=5, 
-        use_ctc=True,
-        streaming=True,
-        num_mfcc=13
-    )
-    
-    print(f"Vocabulary size: {len(char_to_idx)}")
-    print(f"Blank token index: {char_to_idx['<blank>']}")
-    
-    # Print sample batch for CTC
-    for batch in train_loader:
-        print(f"Features shape: {batch['features'].shape}")
-        print(f"Feature lengths: {batch['feature_lengths']}")
-        print(f"Targets shape after concat: {batch['targets'].shape}")  # Concatenated
-        print(f"Target lengths element one: {batch['target_lengths'][0]}")
-        print(f"Target lengths: {batch['target_lengths']}")
-        print(f"Sample texts: {batch['texts'][:2]}")
-        
-        # Example CTC loss calculation
-        ctc_loss = create_ctc_loss_function(char_to_idx)
-        
-        # Simulate model output (random logits)
-        batch_size = batch['features'].size(0)
-        vocab_size = len(char_to_idx)
-        max_time = batch['features'].size(2)
-        
-        # Fake model output: [time, batch, vocab]
-        log_probs = torch.randn(max_time, batch_size, vocab_size).log_softmax(2)
-        
-        # CTC loss
-        loss = ctc_loss(
-            log_probs,
-            batch['targets'],
-            batch['feature_lengths'], 
-            batch['target_lengths']
-        )
-        print(f"Example CTC loss: {loss.item():.4f}")
-        break
