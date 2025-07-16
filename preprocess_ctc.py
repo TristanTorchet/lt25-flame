@@ -102,8 +102,7 @@ class LibriSpeechASRDataset(Dataset):
             '<blank>',  # 0 - CTC blank token
             ' ',        # 1 - space
             "'",        # 2 - apostrophe
-        ] + [chr(i) for i in range(ord('a'), ord('z') + 1)] + \  # 3-28 - letters
-            [chr(i) for i in range(ord('0'), ord('9') + 1)]  # 29-38 - digits
+        ] + [chr(i) for i in range(ord('a'), ord('z') + 1)] + [chr(i) for i in range(ord('0'), ord('9') + 1)]  # 3-38 - letters and digits
         
         
         # Create mappings
@@ -117,7 +116,7 @@ class LibriSpeechASRDataset(Dataset):
         self.samples = []
         audio_lengths = []
         
-        print("Processing LibriSpeech samples...")
+        print("Processing samples...")
         
         # Create character tokenizer if none provided
         if self.tokenizer is None:
@@ -250,7 +249,6 @@ class LibriSpeechASRDataset(Dataset):
             'features': features,
             'text': sample['text'],
             'text_tokens': torch.tensor(sample['text_tokens'], dtype=torch.long),
-            'speaker_id': sample['speaker_id'],
             'id': sample['id']
         }
 
@@ -295,7 +293,7 @@ def collate_fn_ctc(batch):
         
         # Other info
         texts.append(item['text'])
-        speaker_ids.append(item['speaker_id'])
+        speaker_ids.append(item.get('speaker_id', 'unknown'))
         ids.append(item['id'])
     
     return {
@@ -337,7 +335,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
     # Create datasets
     train_dataset = LibriSpeechASRDataset(
         split=train_split,
-        max_samples=max_samples,
+        max_samples=20000,
         num_mfcc=num_mfcc,
         streaming=streaming,
         dataset=dataset,
@@ -367,6 +365,7 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         batch_size=batch_size, 
         shuffle=True,
         collate_fn=collate_function,
+        num_workers=3,
         **dataloader_kwargs
     )
     
