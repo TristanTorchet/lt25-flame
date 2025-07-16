@@ -28,12 +28,14 @@ class LibriSpeechASRDataset(Dataset):
                  use_mfcc=True,
                  max_samples=None,
                  tokenizer=None,
-                 streaming=False,):
+                 streaming=False,
+                 dataset="librispeech",):
         """
-        LibriSpeech dataset for ASR with audio preprocessing
+        ASR dataset for multiple datasets with audio preprocessing
         
         Args:
-            split: LibriSpeech split ("train.100", "train.360", "train.500", "validation.clean", "test.clean")
+            split: Dataset split (for LibriSpeech: "train.100", "train.360", "train.500", "validation.clean", "test.clean")
+                  (for People's Speech: "train", "validation", "test")
             max_audio_length: Maximum audio length in samples
             min_audio_length: Minimum audio length in samples
             background_frequency: Probability of adding background noise
@@ -43,6 +45,7 @@ class LibriSpeechASRDataset(Dataset):
             max_samples: Maximum number of samples to process
             tokenizer: Text tokenizer for labels (optional)
             streaming: Whether to use streaming mode for large datasets
+            dataset: Dataset to use ("librispeech" or "peoples_speech")
         """
         
         self.max_audio_length = max_audio_length
@@ -54,16 +57,29 @@ class LibriSpeechASRDataset(Dataset):
         self.max_samples = max_samples
         self.tokenizer = tokenizer
         self.streaming = streaming
+        self.dataset_name = dataset
         
-        # Load LibriSpeech dataset
-        print(f"Loading LibriSpeech {split} split...")
-        self.dataset = load_dataset(
-            "openslr/librispeech_asr",
-            "clean",
-            split=split,
-            trust_remote_code=True,
-            streaming=streaming,
-        )
+        # Load dataset based on type
+        if dataset == "librispeech":
+            print(f"Loading LibriSpeech {split} split...")
+            self.dataset = load_dataset(
+                "openslr/librispeech_asr",
+                "clean",
+                split=split,
+                trust_remote_code=True,
+                streaming=streaming,
+            )
+        elif dataset == "peoples_speech":
+            print(f"Loading MLCommons People's Speech {split} split...")
+            self.dataset = load_dataset(
+                "MLCommons/peoples_speech",
+                "clean_sa",
+                split=split,
+                trust_remote_code=True,
+                streaming=streaming,
+            )
+        else:
+            raise ValueError(f"Unsupported dataset: {dataset}. Choose 'librispeech' or 'peoples_speech'.")
         
         # Initialize transforms
         # Ensure n_mels >= num_mfcc to avoid ValueError
@@ -86,7 +102,8 @@ class LibriSpeechASRDataset(Dataset):
             '<blank>',  # 0 - CTC blank token
             ' ',        # 1 - space
             "'",        # 2 - apostrophe
-        ] + [chr(i) for i in range(ord('a'), ord('z') + 1)]  # 3-28 - letters
+        ] + [chr(i) for i in range(ord('a'), ord('z') + 1)] + \  # 3-28 - letters
+            [chr(i) for i in range(ord('0'), ord('9') + 1)]  # 29-38 - digits
         
         
         # Create mappings
@@ -110,8 +127,15 @@ class LibriSpeechASRDataset(Dataset):
             if self.max_samples != -1:
                 if self.max_samples and idx >= self.max_samples: break
                 
-            audio_array = sample['audio']['array']
-            text = sample['text']
+            # Handle different dataset formats
+            if self.dataset_name == "librispeech":
+                audio_array = sample['audio']['array']
+                text = sample['text']
+            elif self.dataset_name == "peoples_speech":
+                audio_array = sample['audio']['array']
+                text = sample['text']
+            else:
+                raise ValueError(f"Unsupported dataset format: {self.dataset_name}")
             
             # Filter by audio length
             audio_length = len(audio_array)
@@ -130,7 +154,6 @@ class LibriSpeechASRDataset(Dataset):
                 'audio': audio_array,
                 'text': text,
                 'text_tokens': text_tokens,
-                'speaker_id': sample['speaker_id'],
                 'id': sample['id']
             })
             
@@ -287,7 +310,7 @@ def collate_fn_ctc(batch):
 
 
 # Example usage and testing
-def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, **dataloader_kwargs):
+def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_mfcc=256, streaming=False, dataset="librispeech", **dataloader_kwargs):
     """Create train and validation dataloaders for ASR
     
     Args:
@@ -296,28 +319,44 @@ def create_asr_dataloaders(batch_size=16, max_samples=1000, use_ctc=False, num_m
         use_ctc: Whether to use CTC-specific collate function
         num_mfcc: Number of MFCC features
         streaming: Whether to use streaming mode
+        dataset: Dataset to use ("librispeech" or "peoples_speech")
     """
+    
+    # Define splits based on dataset
+    if dataset == "librispeech":
+        train_split = "train.100"
+        val_split = "validation"
+        test_split = "test"
+    elif dataset == "peoples_speech":
+        train_split = "train"
+        val_split = "validation"
+        test_split = "test"
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset}")
     
     # Create datasets
     train_dataset = LibriSpeechASRDataset(
-        split="train.100",
+        split=train_split,
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
+        dataset=dataset,
     )
     
     val_dataset = LibriSpeechASRDataset(
-        split="validation",
+        split=val_split,
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
+        dataset=dataset,
     )
     
     test_dataset = LibriSpeechASRDataset(
-        split="test",
+        split=test_split,
         max_samples=max_samples,
         num_mfcc=num_mfcc,
         streaming=streaming,
+        dataset=dataset,
     )
     
     collate_function = collate_fn_ctc 

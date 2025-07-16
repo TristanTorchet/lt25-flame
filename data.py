@@ -120,10 +120,11 @@ def create_librosa_raw_classification_dataset(
     max_samples=1000,
     num_mfcc=80,
     cache_dir="cache/",
+    dataset="librispeech",
     **dataloader_kwargs,
 ):
 
-    print("[*] Generating LibriSpeech ASR Dataset")
+    print(f"[*] Generating {dataset.upper()} ASR Dataset")
 
     # Import here to avoid circular imports
     from preprocess_ctc import create_asr_dataloaders
@@ -133,6 +134,7 @@ def create_librosa_raw_classification_dataset(
         max_samples=max_samples, 
         use_ctc=True,
         num_mfcc=num_mfcc,
+        dataset=dataset,
         **dataloader_kwargs,
     )
 

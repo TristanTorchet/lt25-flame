@@ -18,7 +18,7 @@ class HGRNASRConfig(HGRNConfig):
     def __init__(
         self,
         input_size: int = 80,  # MFCC features
-        vocab_size: int = 50,  # Number of character classes
+        vocab_size: int = 39,  # Number of character classes (29 original + 10 digits)
         max_sequence_length: int = 1024,
         blank_id: int = 0,  # CTC blank token
         **kwargs

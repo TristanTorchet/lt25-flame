@@ -23,6 +23,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train HGRN on ASR")
     
     # Dataset args
+    parser.add_argument("--dataset", type=str, default="librispeech", 
+                       choices=["librispeech", "peoples_speech"],
+                       help="Dataset to use: librispeech or peoples_speech")
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--max_samples", type=int, default=None, help="Maximum samples for ASR dataset")
     parser.add_argument("--num_mfcc", type=int, default=80, help="Number of MFCC features")
@@ -371,7 +374,7 @@ def main():
             name=f"{args.model_name}_{timestamp}",
             config={
                 "model_name": args.model_name,
-                "dataset": "ASR",
+                "dataset": f"ASR ({args.dataset})",
                 "batch_size": args.batch_size,
                 "hidden_size": args.hidden_size,
                 "num_layers": args.num_layers,
@@ -399,12 +402,13 @@ def main():
         bsz=args.batch_size,
         max_samples=args.max_samples,
         num_mfcc=args.num_mfcc,
-        cache_dir=args.cache_dir
+        cache_dir=args.cache_dir,
+        dataset=args.dataset
     )
     
     # Log dataset info
     logger.log_dataset_info(
-        dataset_name="ASR",
+        dataset_name=f"ASR ({args.dataset})",
         n_classes=n_classes,
         seq_len=seq_len,
         input_dim=input_dim,
@@ -416,7 +420,7 @@ def main():
     # Log dataset info to wandb if enabled
     if args.use_wandb:
         wandb.log({
-            "dataset/name": "ASR",
+            "dataset/name": f"ASR ({args.dataset})",
             "dataset/n_classes": n_classes,
             "dataset/seq_len": seq_len,
             "dataset/input_dim": input_dim,
@@ -608,7 +612,7 @@ def main():
     final_info = {
         "model_name": args.model_name,
         "timestamp": timestamp,
-        "dataset": "ASR",
+        "dataset": f"ASR ({args.dataset})",
         "final_test_loss": test_loss,
         "final_test_accuracy": test_acc,
         "final_test_metrics": test_metrics,
